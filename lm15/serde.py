@@ -1,0 +1,584 @@
+"""
+lm15.serde — Serialization and deserialization for the lm15 type system.
+
+One function pair per type: xxx_to_dict / xxx_from_dict.
+All Part field names are consistent: "input" on the wire matches .input
+in memory.  No name translation (no "arguments" vs "input" split).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .types import (
+    AudioFormat,
+    AudioPart,
+    BuiltinTool,
+    CitationPart,
+    Config,
+    Delta,
+    DocumentPart,
+    ErrorDetail,
+    FunctionTool,
+    ImagePart,
+    LiveClientEvent,
+    LiveConfig,
+    LiveServerEvent,
+    Message,
+    Part,
+    PART_TYPES,
+    Reasoning,
+    Request,
+    Response,
+    Source,
+    StreamEvent,
+    TextPart,
+    ThinkingPart,
+    RefusalPart,
+    Tool,
+    ToolCallPart,
+    ToolChoice,
+    ToolResultPart,
+    Usage,
+    VideoPart,
+)
+
+
+# ─── Helpers ─────────────────────────────────────────────────────────
+
+def _is_empty(value: Any) -> bool:
+    return value is None or value == "" or value == () or value == [] or value == {}
+
+
+def _clean_sequence(values: list[Any]) -> list[Any]:
+    out: list[Any] = []
+    for value in values:
+        if isinstance(value, dict):
+            value = _clean_mapping(value)
+        elif isinstance(value, list):
+            value = _clean_sequence(value)
+        if _is_empty(value):
+            continue
+        out.append(value)
+    return out
+
+
+def _clean_mapping(values: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in values.items():
+        if isinstance(value, dict):
+            value = _clean_mapping(value)
+        elif isinstance(value, list):
+            value = _clean_sequence(value)
+        elif isinstance(value, tuple):
+            value = _clean_sequence(list(value))
+        if _is_empty(value):
+            continue
+        out[key] = value
+    return out
+
+
+# ─── Source ──────────────────────────────────────────────────────────
+
+def source_to_dict(s: Source) -> dict[str, Any]:
+    return _clean_mapping({
+        "type": s.type,
+        "media_type": s.media_type,
+        "data": s.data,
+        "url": s.url,
+        "file_id": s.file_id,
+        "detail": s.detail,
+    })
+
+
+def source_from_dict(d: dict[str, Any]) -> Source:
+    return Source(
+        type=d["type"],
+        media_type=d.get("media_type", ""),
+        data=d.get("data"),
+        url=d.get("url"),
+        file_id=d.get("file_id"),
+        detail=d.get("detail"),
+    )
+
+
+# ─── Parts ───────────────────────────────────────────────────────────
+
+def part_to_dict(part: Part) -> dict[str, Any]:
+    """Serialize a Part to the canonical lm15 JSON format."""
+    d: dict[str, Any] = {"type": part.type}
+
+    if isinstance(part, TextPart):
+        d["text"] = part.text
+        if part.metadata is not None:
+            d["metadata"] = part.metadata
+
+    elif isinstance(part, ThinkingPart):
+        d["text"] = part.text
+        if part.redacted:
+            d["redacted"] = part.redacted
+
+    elif isinstance(part, RefusalPart):
+        d["text"] = part.text
+
+    elif isinstance(part, CitationPart):
+        if part.text is not None:
+            d["text"] = part.text
+        if part.url is not None:
+            d["url"] = part.url
+        if part.title is not None:
+            d["title"] = part.title
+
+    elif isinstance(part, (ImagePart, AudioPart, VideoPart, DocumentPart)):
+        d["source"] = source_to_dict(part.source)
+        if part.metadata is not None:
+            d["metadata"] = part.metadata
+
+    elif isinstance(part, ToolCallPart):
+        d["id"] = part.id
+        d["name"] = part.name
+        d["input"] = part.input  # consistent: "input" everywhere
+
+    elif isinstance(part, ToolResultPart):
+        d["id"] = part.id
+        if part.name is not None:
+            d["name"] = part.name
+        d["content"] = [part_to_dict(p) for p in part.content] if part.content else []
+        if part.is_error:
+            d["is_error"] = part.is_error
+
+    return d
+
+
+def part_from_dict(d: dict[str, Any]) -> Part:
+    """Deserialize a Part from the canonical lm15 JSON format."""
+    t = d["type"]
+
+    if t == "text":
+        return TextPart(text=d.get("text", ""), metadata=d.get("metadata"))
+
+    if t == "thinking":
+        return ThinkingPart(text=d.get("text", ""), redacted=d.get("redacted", False))
+
+    if t == "refusal":
+        return RefusalPart(text=d.get("text", ""))
+
+    if t == "citation":
+        return CitationPart(text=d.get("text"), url=d.get("url"), title=d.get("title"))
+
+    if t in ("image", "audio", "video", "document"):
+        src = d.get("source", {})
+        source = source_from_dict(src)
+        cls = PART_TYPES[t]
+        return cls(source=source, metadata=d.get("metadata"))
+
+    if t == "tool_call":
+        return ToolCallPart(
+            id=d["id"],
+            name=d["name"],
+            input=d.get("input", {}),
+        )
+
+    if t == "tool_result":
+        raw_content = d.get("content", [])
+        if isinstance(raw_content, str):
+            content = (TextPart(text=raw_content),) if raw_content else ()
+        elif isinstance(raw_content, list):
+            content = tuple(
+                part_from_dict(c) if isinstance(c, dict) else TextPart(text=str(c))
+                for c in raw_content
+            )
+        else:
+            content = ()
+        return ToolResultPart(
+            id=d["id"],
+            content=content,
+            name=d.get("name"),
+            is_error=d.get("is_error", False),
+        )
+
+    raise ValueError(f"unsupported part type: {t}")
+
+
+# ─── Messages ────────────────────────────────────────────────────────
+
+def message_to_dict(msg: Message) -> dict[str, Any]:
+    return {"role": msg.role, "parts": [part_to_dict(p) for p in msg.parts]}
+
+
+def message_from_dict(d: dict[str, Any]) -> Message:
+    role = d["role"]
+    parts_raw = d.get("parts", [])
+    parts = tuple(
+        part_from_dict(p) if isinstance(p, dict) else TextPart(text=str(p))
+        for p in parts_raw
+    )
+    if not parts:
+        raise ValueError(f"message for role '{role}' has no parts")
+    return Message(role=role, parts=parts)
+
+
+def messages_to_json(messages: list[Message] | tuple[Message, ...]) -> list[dict[str, Any]]:
+    return [message_to_dict(m) for m in messages]
+
+
+def messages_from_json(data: list[dict[str, Any]]) -> list[Message]:
+    return [message_from_dict(d) for d in data]
+
+
+# ─── Tools ───────────────────────────────────────────────────────────
+
+def tool_to_dict(t: Tool) -> dict[str, Any]:
+    if isinstance(t, FunctionTool):
+        return _clean_mapping({
+            "type": "function",
+            "name": t.name,
+            "description": t.description,
+            "parameters": t.parameters,
+        })
+    if isinstance(t, BuiltinTool):
+        return _clean_mapping({
+            "type": "builtin",
+            "name": t.name,
+            "config": t.config,
+        })
+    raise TypeError(f"unsupported tool type: {type(t)}")
+
+
+def tool_from_dict(d: dict[str, Any]) -> Tool:
+    if d.get("type") == "builtin":
+        return BuiltinTool(name=d["name"], config=d.get("config"))
+    return FunctionTool(
+        name=d["name"],
+        description=d.get("description"),
+        parameters=d.get("parameters", {"type": "object", "properties": {}}),
+    )
+
+
+# ─── Config ──────────────────────────────────────────────────────────
+
+def tool_choice_to_dict(tc: ToolChoice) -> dict[str, Any]:
+    return _clean_mapping({
+        "mode": tc.mode,
+        "allowed": list(tc.allowed),
+        "parallel": tc.parallel,
+    })
+
+
+def tool_choice_from_dict(d: dict[str, Any]) -> ToolChoice:
+    return ToolChoice(
+        mode=d.get("mode", "auto"),
+        allowed=tuple(d.get("allowed", [])),
+        parallel=d.get("parallel"),
+    )
+
+
+def reasoning_to_dict(r: Reasoning) -> dict[str, Any]:
+    return _clean_mapping({
+        "enabled": r.enabled,
+        "budget": r.budget,
+        "effort": r.effort,
+    })
+
+
+def reasoning_from_dict(d: dict[str, Any]) -> Reasoning:
+    return Reasoning(
+        enabled=d.get("enabled", True),
+        budget=d.get("budget"),
+        effort=d.get("effort"),
+    )
+
+
+def config_to_dict(c: Config) -> dict[str, Any]:
+    return _clean_mapping({
+        "max_tokens": c.max_tokens,
+        "temperature": c.temperature,
+        "top_p": c.top_p,
+        "top_k": c.top_k,
+        "stop": list(c.stop),
+        "response_format": c.response_format,
+        "tool_choice": tool_choice_to_dict(c.tool_choice) if c.tool_choice else None,
+        "reasoning": reasoning_to_dict(c.reasoning) if c.reasoning else None,
+        "extensions": c.extensions,
+    })
+
+
+def config_from_dict(d: dict[str, Any]) -> Config:
+    return Config(
+        max_tokens=d.get("max_tokens"),
+        temperature=d.get("temperature"),
+        top_p=d.get("top_p"),
+        top_k=d.get("top_k"),
+        stop=tuple(d.get("stop", [])),
+        response_format=d.get("response_format"),
+        tool_choice=tool_choice_from_dict(d["tool_choice"]) if isinstance(d.get("tool_choice"), dict) else None,
+        reasoning=reasoning_from_dict(d["reasoning"]) if isinstance(d.get("reasoning"), dict) else None,
+        extensions=d.get("extensions"),
+    )
+
+
+# ─── ErrorDetail ─────────────────────────────────────────────────────
+
+def error_detail_to_dict(e: ErrorDetail) -> dict[str, Any]:
+    return _clean_mapping({
+        "code": e.code,
+        "message": e.message,
+        "provider_code": e.provider_code,
+    })
+
+
+def error_detail_from_dict(d: dict[str, Any]) -> ErrorDetail:
+    return ErrorDetail(
+        code=d["code"],
+        message=d.get("message", ""),
+        provider_code=d.get("provider_code"),
+    )
+
+
+# ─── Delta ───────────────────────────────────────────────────────────
+
+def delta_to_dict(d: Delta) -> dict[str, Any]:
+    return _clean_mapping({
+        "type": d.type,
+        "part_index": d.part_index if d.part_index else None,
+        "text": d.text,
+        "data": d.data,
+        "input": d.input,
+        "id": d.id,
+        "name": d.name,
+        "url": d.url,
+        "title": d.title,
+        "source": source_to_dict(d.source) if d.source else None,
+    })
+
+
+def delta_from_dict(d: dict[str, Any]) -> Delta:
+    source_raw = d.get("source")
+    return Delta(
+        type=d["type"],
+        part_index=d.get("part_index", 0),
+        text=d.get("text"),
+        data=d.get("data"),
+        input=d.get("input"),
+        id=d.get("id"),
+        name=d.get("name"),
+        url=d.get("url"),
+        title=d.get("title"),
+        source=source_from_dict(source_raw) if isinstance(source_raw, dict) else None,
+    )
+
+
+# ─── Usage ───────────────────────────────────────────────────────────
+
+def usage_to_dict(u: Usage) -> dict[str, Any]:
+    return _clean_mapping({
+        "input_tokens": u.input_tokens,
+        "output_tokens": u.output_tokens,
+        "total_tokens": u.total_tokens,
+        "cache_read_tokens": u.cache_read_tokens,
+        "cache_write_tokens": u.cache_write_tokens,
+        "reasoning_tokens": u.reasoning_tokens,
+        "input_audio_tokens": u.input_audio_tokens,
+        "output_audio_tokens": u.output_audio_tokens,
+    })
+
+
+def usage_from_dict(d: dict[str, Any]) -> Usage:
+    return Usage(
+        input_tokens=d.get("input_tokens", 0),
+        output_tokens=d.get("output_tokens", 0),
+        total_tokens=d.get("total_tokens", 0),
+        cache_read_tokens=d.get("cache_read_tokens"),
+        cache_write_tokens=d.get("cache_write_tokens"),
+        reasoning_tokens=d.get("reasoning_tokens"),
+        input_audio_tokens=d.get("input_audio_tokens"),
+        output_audio_tokens=d.get("output_audio_tokens"),
+    )
+
+
+# ─── StreamEvent ─────────────────────────────────────────────────────
+
+def stream_event_to_dict(e: StreamEvent) -> dict[str, Any]:
+    return _clean_mapping({
+        "type": e.type,
+        "id": e.id,
+        "model": e.model,
+        "delta": delta_to_dict(e.delta) if e.delta else None,
+        "finish_reason": e.finish_reason,
+        "usage": usage_to_dict(e.usage) if e.usage else None,
+        "error": error_detail_to_dict(e.error) if e.error else None,
+        "provider_data": e.provider_data,
+    })
+
+
+def stream_event_from_dict(d: dict[str, Any]) -> StreamEvent:
+    return StreamEvent(
+        type=d["type"],
+        id=d.get("id"),
+        model=d.get("model"),
+        delta=delta_from_dict(d["delta"]) if isinstance(d.get("delta"), dict) else None,
+        finish_reason=d.get("finish_reason"),
+        usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
+        error=error_detail_from_dict(d["error"]) if isinstance(d.get("error"), dict) else None,
+        provider_data=d.get("provider_data"),
+    )
+
+
+# ─── Request / Response ─────────────────────────────────────────────
+
+def request_to_dict(r: Request) -> dict[str, Any]:
+    system: Any
+    if isinstance(r.system, tuple):
+        system = [part_to_dict(p) for p in r.system]
+    else:
+        system = r.system
+    return _clean_mapping({
+        "model": r.model,
+        "messages": [message_to_dict(m) for m in r.messages],
+        "system": system,
+        "tools": [tool_to_dict(t) for t in r.tools],
+        "config": config_to_dict(r.config),
+    })
+
+
+def request_from_dict(d: dict[str, Any]) -> Request:
+    raw_system = d.get("system")
+    system: str | tuple[Part, ...] | None
+    if isinstance(raw_system, list):
+        system = tuple(part_from_dict(x) for x in raw_system)
+    else:
+        system = raw_system
+    return Request(
+        model=d["model"],
+        messages=tuple(message_from_dict(m) for m in d["messages"]),
+        system=system,
+        tools=tuple(tool_from_dict(t) for t in d.get("tools", [])),
+        config=config_from_dict(d.get("config", {})),
+    )
+
+
+def response_to_dict(r: Response, *, include_provider_data: bool = False) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": r.id,
+        "model": r.model,
+        "message": message_to_dict(r.message),
+        "finish_reason": r.finish_reason,
+        "usage": usage_to_dict(r.usage),
+    }
+    if include_provider_data and r.provider_data is not None:
+        out["provider_data"] = r.provider_data
+    return _clean_mapping(out)
+
+
+def response_from_dict(d: dict[str, Any]) -> Response:
+    return Response(
+        id=d.get("id", ""),
+        model=d["model"],
+        message=message_from_dict(d["message"]),
+        finish_reason=d["finish_reason"],
+        usage=usage_from_dict(d.get("usage", {})),
+        provider_data=d.get("provider_data"),
+    )
+
+
+# ─── AudioFormat ─────────────────────────────────────────────────────
+
+def audio_format_to_dict(af: AudioFormat) -> dict[str, Any]:
+    return _clean_mapping({
+        "encoding": af.encoding,
+        "sample_rate": af.sample_rate,
+        "channels": af.channels,
+    })
+
+
+def audio_format_from_dict(d: dict[str, Any]) -> AudioFormat:
+    return AudioFormat(
+        encoding=d["encoding"],
+        sample_rate=d["sample_rate"],
+        channels=d.get("channels", 1),
+    )
+
+
+# ─── LiveConfig ──────────────────────────────────────────────────────
+
+def live_config_to_dict(lc: LiveConfig) -> dict[str, Any]:
+    system: Any
+    if isinstance(lc.system, tuple):
+        system = [part_to_dict(p) for p in lc.system]
+    else:
+        system = lc.system
+    return _clean_mapping({
+        "model": lc.model,
+        "system": system,
+        "tools": [tool_to_dict(t) for t in lc.tools],
+        "voice": lc.voice,
+        "input_format": audio_format_to_dict(lc.input_format) if lc.input_format else None,
+        "output_format": audio_format_to_dict(lc.output_format) if lc.output_format else None,
+        "extensions": lc.extensions,
+    })
+
+
+def live_config_from_dict(d: dict[str, Any]) -> LiveConfig:
+    raw_system = d.get("system")
+    system: str | tuple[Part, ...] | None
+    if isinstance(raw_system, list):
+        system = tuple(part_from_dict(x) for x in raw_system)
+    else:
+        system = raw_system
+    return LiveConfig(
+        model=d["model"],
+        system=system,
+        tools=tuple(tool_from_dict(t) for t in d.get("tools", [])),
+        voice=d.get("voice"),
+        input_format=audio_format_from_dict(d["input_format"]) if isinstance(d.get("input_format"), dict) else None,
+        output_format=audio_format_from_dict(d["output_format"]) if isinstance(d.get("output_format"), dict) else None,
+        extensions=d.get("extensions"),
+    )
+
+
+# ─── LiveClientEvent / LiveServerEvent ───────────────────────────────
+
+def live_client_event_to_dict(e: LiveClientEvent) -> dict[str, Any]:
+    return _clean_mapping({
+        "type": e.type,
+        "data": e.data,
+        "text": e.text,
+        "id": e.id,
+        "content": [part_to_dict(p) for p in e.content],
+    })
+
+
+def live_client_event_from_dict(d: dict[str, Any]) -> LiveClientEvent:
+    return LiveClientEvent(
+        type=d["type"],
+        data=d.get("data"),
+        text=d.get("text"),
+        id=d.get("id"),
+        content=tuple(part_from_dict(p) for p in d.get("content", [])),
+    )
+
+
+def live_server_event_to_dict(e: LiveServerEvent) -> dict[str, Any]:
+    return _clean_mapping({
+        "type": e.type,
+        "data": e.data,
+        "text": e.text,
+        "id": e.id,
+        "name": e.name,
+        "input": e.input,
+        "usage": usage_to_dict(e.usage) if e.usage else None,
+        "error": error_detail_to_dict(e.error) if e.error else None,
+    })
+
+
+def live_server_event_from_dict(d: dict[str, Any]) -> LiveServerEvent:
+    return LiveServerEvent(
+        type=d["type"],
+        data=d.get("data"),
+        text=d.get("text"),
+        id=d.get("id"),
+        name=d.get("name"),
+        input=d.get("input"),
+        usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
+        error=error_detail_from_dict(d["error"]) if isinstance(d.get("error"), dict) else None,
+    )
