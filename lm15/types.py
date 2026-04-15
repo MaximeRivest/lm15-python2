@@ -36,13 +36,6 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias
 
 
-# ─── JSON Primitives ─────────────────────────────────────────────────
-
-JsonPrimitive: TypeAlias = None | bool | int | float | str
-JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
-JsonArray: TypeAlias = list[JsonValue]
-JsonObject: TypeAlias = dict[str, JsonValue]
-
 # ─── Literal vocabularies ────────────────────────────────────────────
 
 Role = Literal["user", "assistant", "tool"]
@@ -66,25 +59,6 @@ ErrorCode = Literal[
 ]
 StreamEventType = Literal["start", "delta", "end", "error"]
 ResponseFormatType = Literal["text", "json", "json_schema"]
-
-
-# ─── Validation helpers ──────────────────────────────────────────────
-
-def _is_json_value(value: Any) -> bool:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return True
-    if isinstance(value, (list, tuple)):
-        return all(_is_json_value(x) for x in value)
-    if isinstance(value, dict):
-        return all(isinstance(k, str) and _is_json_value(v) for k, v in value.items())
-    return False
-
-
-def _validate_json_object(value: Any, *, name: str) -> None:
-    if value is None:
-        return
-    if not isinstance(value, dict) or not _is_json_value(value):
-        raise TypeError(f"{name} must be a JSON object")
 
 
 # ─── Source ──────────────────────────────────────────────────────────
@@ -165,22 +139,16 @@ class Source:
 class TextPart:
     """A block of text content."""
     text: str
-    metadata: JsonObject | None = None
+    metadata: dict[str, Any] | None = None
     type: Literal["text"] = field(default="text", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.metadata, name="metadata")
 
 
 @dataclass(frozen=True, slots=True)
 class ImagePart:
     """An image, referenced via Source."""
     source: Source
-    metadata: JsonObject | None = None
+    metadata: dict[str, Any] | None = None
     type: Literal["image"] = field(default="image", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.metadata, name="metadata")
 
     @property
     def bytes(self) -> bytes:
@@ -191,11 +159,8 @@ class ImagePart:
 class AudioPart:
     """Audio content, referenced via Source."""
     source: Source
-    metadata: JsonObject | None = None
+    metadata: dict[str, Any] | None = None
     type: Literal["audio"] = field(default="audio", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.metadata, name="metadata")
 
     @property
     def bytes(self) -> bytes:
@@ -206,22 +171,16 @@ class AudioPart:
 class VideoPart:
     """Video content, referenced via Source."""
     source: Source
-    metadata: JsonObject | None = None
+    metadata: dict[str, Any] | None = None
     type: Literal["video"] = field(default="video", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.metadata, name="metadata")
 
 
 @dataclass(frozen=True, slots=True)
 class DocumentPart:
     """A document (PDF, etc.), referenced via Source."""
     source: Source
-    metadata: JsonObject | None = None
+    metadata: dict[str, Any] | None = None
     type: Literal["document"] = field(default="document", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.metadata, name="metadata")
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,7 +188,7 @@ class ToolCallPart:
     """The model requests an external computation."""
     id: str
     name: str
-    input: JsonObject
+    input: dict[str, Any]
     type: Literal["tool_call"] = field(default="tool_call", init=False)
 
     def __post_init__(self) -> None:
@@ -237,7 +196,6 @@ class ToolCallPart:
             raise ValueError("ToolCallPart requires id")
         if not self.name:
             raise ValueError("ToolCallPart requires name")
-        _validate_json_object(self.input, name="input")
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +267,7 @@ MEDIA_TYPES: tuple[type, ...] = (ImagePart, AudioPart, VideoPart, DocumentPart)
 # Factory functions for the common construction patterns.  These live
 # at module level — there's no base class to hang them on.
 
-def text(content: str, *, metadata: JsonObject | None = None) -> TextPart:
+def text(content: str, *, metadata: dict[str, Any] | None = None) -> TextPart:
     """Create a text part."""
     return TextPart(text=content, metadata=metadata)
 
@@ -362,7 +320,7 @@ def _make_source(
     )
 
 
-def _cache_metadata(cache: bool | JsonObject | None) -> JsonObject | None:
+def _cache_metadata(cache: bool | dict[str, Any] | None) -> dict[str, Any] | None:
     if cache is None:
         return None
     if cache is True:
@@ -379,7 +337,7 @@ def image(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
-    cache: bool | JsonObject | None = None,
+    cache: bool | dict[str, Any] | None = None,
 ) -> ImagePart:
     source = _make_source("image", url=url, data=data, file_id=file_id,
                           media_type=media_type, detail=detail, default_media_type="image/png")
@@ -393,7 +351,7 @@ def audio(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
-    cache: bool | JsonObject | None = None,
+    cache: bool | dict[str, Any] | None = None,
 ) -> AudioPart:
     source = _make_source("audio", url=url, data=data, file_id=file_id,
                           media_type=media_type, detail=detail, default_media_type="audio/wav")
@@ -407,7 +365,7 @@ def video(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
-    cache: bool | JsonObject | None = None,
+    cache: bool | dict[str, Any] | None = None,
 ) -> VideoPart:
     source = _make_source("video", url=url, data=data, file_id=file_id,
                           media_type=media_type, detail=detail, default_media_type="video/mp4")
@@ -421,14 +379,14 @@ def document(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
-    cache: bool | JsonObject | None = None,
+    cache: bool | dict[str, Any] | None = None,
 ) -> DocumentPart:
     source = _make_source("document", url=url, data=data, file_id=file_id,
                           media_type=media_type, detail=detail, default_media_type="application/pdf")
     return DocumentPart(source=source, metadata=_cache_metadata(cache))
 
 
-def tool_call(id: str, name: str, input: JsonObject) -> ToolCallPart:
+def tool_call(id: str, name: str, input: dict[str, Any]) -> ToolCallPart:
     return ToolCallPart(id=id, name=name, input=input)
 
 
@@ -590,7 +548,7 @@ class StreamEvent:
     error: ErrorDetail | None = None
 
     # Provider-specific metadata (end events)
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.type == "delta" and self.delta is None:
@@ -606,12 +564,9 @@ class FunctionTool:
     """A function the model can invoke."""
     name: str
     description: str | None = None
-    parameters: JsonObject = field(default_factory=lambda: {"type": "object", "properties": {}})
+    parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
     fn: Any = None
     type: Literal["function"] = field(default="function", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.parameters, name="parameters")
 
     @staticmethod
     def from_fn(fn: Any) -> "FunctionTool":
@@ -619,7 +574,7 @@ class FunctionTool:
         import inspect
         sig = inspect.signature(fn)
         hints = inspect.get_annotations(fn, eval_str=True)
-        properties: JsonObject = {}
+        properties: dict[str, Any] = {}
         required: list[str] = []
         for name, param in sig.parameters.items():
             if param.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
@@ -627,7 +582,7 @@ class FunctionTool:
             ann = hints.get(name, str)
             origin = getattr(ann, "__origin__", None)
             if origin in (list, tuple, set):
-                json_type: JsonObject = {"type": "array"}
+                json_type: dict[str, Any] = {"type": "array"}
             elif origin is dict:
                 json_type = {"type": "object"}
             elif ann in (int,):
@@ -641,7 +596,7 @@ class FunctionTool:
             properties[name] = json_type
             if param.default is inspect.Parameter.empty:
                 required.append(name)
-        schema: JsonObject = {"type": "object", "properties": properties}
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
         if required:
             schema["required"] = required
         return FunctionTool(
@@ -655,11 +610,8 @@ class FunctionTool:
 class BuiltinTool:
     """A provider-native tool (web search, code execution, etc.)."""
     name: str
-    config: JsonObject | None = None
+    config: dict[str, Any] | None = None
     type: Literal["builtin"] = field(default="builtin", init=False)
-
-    def __post_init__(self) -> None:
-        _validate_json_object(self.config, name="config")
 
 
 Tool: TypeAlias = FunctionTool | BuiltinTool
@@ -700,10 +652,10 @@ class Config:
     top_p: float | None = None
     top_k: int | None = None
     stop: tuple[str, ...] = ()
-    response_format: JsonObject | None = None
+    response_format: dict[str, Any] | None = None
     tool_choice: ToolChoice | None = None
     reasoning: Reasoning | None = None
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.max_tokens is not None and self.max_tokens <= 0:
@@ -712,8 +664,6 @@ class Config:
             raise ValueError("temperature must be >= 0")
         if self.top_p is not None and not (0 <= self.top_p <= 1):
             raise ValueError("top_p must be in [0, 1]")
-        _validate_json_object(self.response_format, name="response_format")
-        _validate_json_object(self.extensions, name="extensions")
 
 
 # ─── Request ─────────────────────────────────────────────────────────
@@ -769,7 +719,7 @@ class Response:
     message: Message
     finish_reason: FinishReason
     usage: Usage
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
     @property
     def text(self) -> str | None:
@@ -836,7 +786,7 @@ class Response:
 class EmbeddingRequest:
     model: str
     inputs: tuple[str, ...]
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -844,7 +794,7 @@ class EmbeddingResponse:
     model: str
     vectors: tuple[tuple[float, ...], ...]
     usage: Usage = field(default_factory=Usage)
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
 
 # ─── File Upload ─────────────────────────────────────────────────────
@@ -855,13 +805,13 @@ class FileUploadRequest:
     filename: str = "file.bin"
     bytes_data: bytes = b""
     media_type: str = "application/octet-stream"
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class FileUploadResponse:
     id: str
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
 
 # ─── Batch ───────────────────────────────────────────────────────────
@@ -870,14 +820,14 @@ class FileUploadResponse:
 class BatchRequest:
     model: str
     requests: tuple[Request, ...]
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class BatchResponse:
     id: str
     status: str
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
 
 # ─── Image Generation ────────────────────────────────────────────────
@@ -887,13 +837,13 @@ class ImageGenerationRequest:
     model: str
     prompt: str
     size: str | None = None
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ImageGenerationResponse:
     images: tuple[Source, ...]
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
 
 # ─── Audio Generation ────────────────────────────────────────────────
@@ -904,13 +854,13 @@ class AudioGenerationRequest:
     prompt: str
     voice: str | None = None
     format: str | None = None
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class AudioGenerationResponse:
     audio: Source
-    provider_data: JsonObject | None = None
+    provider_data: dict[str, Any] | None = None
 
 
 # ─── Audio Format ────────────────────────────────────────────────────
@@ -938,14 +888,13 @@ class LiveConfig:
     voice: str | None = None
     input_format: AudioFormat | None = None
     output_format: AudioFormat | None = None
-    extensions: JsonObject | None = None
+    extensions: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.model:
             raise ValueError("model is required")
         if isinstance(self.system, tuple) and not self.system:
             raise ValueError("system parts cannot be empty")
-        _validate_json_object(self.extensions, name="extensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -975,7 +924,7 @@ class LiveServerEvent:
     text: str | None = None
     id: str | None = None
     name: str | None = None
-    input: JsonObject | None = None
+    input: dict[str, Any] | None = None
     usage: Usage | None = None
     error: ErrorDetail | None = None
 
@@ -987,7 +936,6 @@ class LiveServerEvent:
         if self.type == "tool_call":
             if not self.id or not self.name or self.input is None:
                 raise ValueError("LiveServerEvent(type='tool_call') requires id, name, input")
-            _validate_json_object(self.input, name="input")
         if self.type == "turn_end" and self.usage is None:
             raise ValueError("LiveServerEvent(type='turn_end') requires usage")
         if self.type == "error" and self.error is None:
@@ -1000,4 +948,4 @@ class LiveServerEvent:
 class ToolCallInfo:
     id: str
     name: str
-    input: JsonObject
+    input: dict[str, Any]
