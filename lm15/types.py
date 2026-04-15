@@ -38,17 +38,12 @@ from typing import Any, Literal, TypeAlias
 
 # ─── Literal vocabularies ────────────────────────────────────────────
 
-Role = Literal["user", "assistant", "tool"]
+Role = Literal["user", "assistant", "tool", "developer"]
 
 PartType = Literal[
     "text", "image", "audio", "video", "document",
     "tool_call", "tool_result",
     "thinking", "refusal", "citation",
-]
-
-DeltaType = Literal[
-    "text", "thinking", "audio",
-    "tool_call", "image", "citation",
 ]
 
 FinishReason = Literal["stop", "length", "tool_call", "content_filter", "error"]
@@ -417,13 +412,23 @@ def tool_result(
 class Message:
     """A contribution to a conversation, attributed to a speaker.
 
-    A message is a sequence of typed Parts.  That's it.
+    A message is a sequence of typed Parts.  Roles:
+
+    - ``user``      — end-user input
+    - ``assistant``  — model output
+    - ``tool``      — tool execution results
+    - ``developer`` — high-authority instructions from the application
+                      developer.  Can appear mid-conversation to inject
+                      new instructions without invalidating the KV-cache
+                      prefix.  On OpenAI this maps to the native
+                      ``developer`` role; on other providers the adapter
+                      converts it to a user message with a clear prefix.
     """
     role: Role
     parts: tuple[Part, ...]
 
     def __post_init__(self) -> None:
-        if self.role not in {"user", "assistant", "tool"}:
+        if self.role not in {"user", "assistant", "tool", "developer"}:
             raise ValueError(f"unsupported role: {self.role}")
         if not self.parts:
             raise ValueError("Message requires at least one part")
@@ -435,6 +440,23 @@ class Message:
     @staticmethod
     def assistant(content: str | Part | list[Part]) -> "Message":
         return Message(role="assistant", parts=_normalize_parts(content))
+
+    @staticmethod
+    def developer(content: str | Part | list[Part]) -> "Message":
+        """Create a developer message.
+
+        Developer messages carry instructions with higher authority than
+        user messages (equivalent to OpenAI's ``developer`` role).  They
+        can appear anywhere in the conversation — including mid-conversation
+        — which is useful for injecting new instructions without
+        invalidating the KV-cache prefix built from earlier turns.
+
+        On providers that don't natively support a developer role
+        (Anthropic, Gemini), the adapter converts these to user messages
+        with a clear ``[developer]`` prefix so the model still sees the
+        instruction boundary.
+        """
+        return Message(role="developer", parts=_normalize_parts(content))
 
     @staticmethod
     def tool(results: list[ToolResultPart] | dict[str, str | Part | list[Part]]) -> "Message":
@@ -485,7 +507,7 @@ class Delta:
       image           → .source (complete or partial)
       citation        → .url, .title, .text
     """
-    type: DeltaType
+    type: PartType
     part_index: int = 0
 
     # Content fields
