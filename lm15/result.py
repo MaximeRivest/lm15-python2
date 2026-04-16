@@ -39,7 +39,6 @@ from .types import (
     Part,
     Request,
     Response,
-    Source,
     StreamEvent,
     TextPart,
     ThinkingPart,
@@ -145,12 +144,11 @@ class _RoundState:
                 meta["input"] = _parse_json_best_effort(aggregate)
 
         elif delta.type == "image":
-            if delta.source is not None:
-                part = ImagePart(source=delta.source)
-            elif delta.data is not None:
-                part = ImagePart(source=Source(type="base64", media_type="image/png", data=str(delta.data)))
+            mt = delta.media_type or "image/png"
+            if delta.data is not None:
+                part = ImagePart(media_type=mt, data=str(delta.data))
             elif delta.url is not None:
-                part = ImagePart(source=Source(type="url", url=str(delta.url), media_type="image/png"))
+                part = ImagePart(media_type=mt, url=str(delta.url))
             else:
                 return chunks
             self.image_parts.append(part)
@@ -549,10 +547,13 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
                 delta=Delta(type="tool_call", part_index=idx, id=part.id, name=part.name, input=json.dumps(part.input)),
             )
         elif isinstance(part, ImagePart):
-            yield StreamEvent(type="delta", delta=Delta(type="image", part_index=idx, source=part.source))
+            yield StreamEvent(type="delta", delta=Delta(
+                type="image", part_index=idx,
+                data=part.data, url=part.url, media_type=part.media_type,
+            ))
         elif isinstance(part, AudioPart):
-            if part.source.type == "base64" and part.source.data:
-                yield StreamEvent(type="delta", delta=Delta(type="audio", part_index=idx, data=part.source.data))
+            if part.data:
+                yield StreamEvent(type="delta", delta=Delta(type="audio", part_index=idx, data=part.data))
         elif isinstance(part, CitationPart):
             yield StreamEvent(type="delta", delta=Delta(type="citation", part_index=idx, text=part.text, url=part.url, title=part.title))
     yield StreamEvent(type="end", finish_reason=response.finish_reason, usage=response.usage, provider_data=response.provider_data)

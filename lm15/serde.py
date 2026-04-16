@@ -30,7 +30,6 @@ from .types import (
     Reasoning,
     Request,
     Response,
-    Source,
     StreamEvent,
     TextPart,
     ThinkingPart,
@@ -78,29 +77,6 @@ def _clean_mapping(values: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# ─── Source ──────────────────────────────────────────────────────────
-
-def source_to_dict(s: Source) -> dict[str, Any]:
-    return _clean_mapping({
-        "type": s.type,
-        "media_type": s.media_type,
-        "data": s.data,
-        "url": s.url,
-        "file_id": s.file_id,
-        "detail": s.detail,
-    })
-
-
-def source_from_dict(d: dict[str, Any]) -> Source:
-    return Source(
-        type=d["type"],
-        media_type=d.get("media_type", ""),
-        data=d.get("data"),
-        url=d.get("url"),
-        file_id=d.get("file_id"),
-        detail=d.get("detail"),
-    )
-
 
 # ─── Parts ───────────────────────────────────────────────────────────
 
@@ -130,7 +106,15 @@ def part_to_dict(part: Part) -> dict[str, Any]:
             d["title"] = part.title
 
     elif isinstance(part, (ImagePart, AudioPart, VideoPart, DocumentPart)):
-        d["source"] = source_to_dict(part.source)
+        d["media_type"] = part.media_type
+        if part.data is not None:
+            d["data"] = part.data
+        if part.url is not None:
+            d["url"] = part.url
+        if part.file_id is not None:
+            d["file_id"] = part.file_id
+        if hasattr(part, "detail") and part.detail is not None:
+            d["detail"] = part.detail
         if part.metadata is not None:
             d["metadata"] = part.metadata
 
@@ -167,10 +151,17 @@ def part_from_dict(d: dict[str, Any]) -> Part:
         return CitationPart(text=d.get("text"), url=d.get("url"), title=d.get("title"))
 
     if t in ("image", "audio", "video", "document"):
-        src = d.get("source", {})
-        source = source_from_dict(src)
         cls = PART_TYPES[t]
-        return cls(source=source, metadata=d.get("metadata"))
+        kwargs: dict[str, Any] = {
+            "media_type": d.get("media_type", ""),
+            "data": d.get("data"),
+            "url": d.get("url"),
+            "file_id": d.get("file_id"),
+            "metadata": d.get("metadata"),
+        }
+        if t == "image":
+            kwargs["detail"] = d.get("detail")
+        return cls(**kwargs)
 
     if t == "tool_call":
         return ToolCallPart(
@@ -348,12 +339,11 @@ def delta_to_dict(d: Delta) -> dict[str, Any]:
         "name": d.name,
         "url": d.url,
         "title": d.title,
-        "source": source_to_dict(d.source) if d.source else None,
+        "media_type": d.media_type,
     })
 
 
 def delta_from_dict(d: dict[str, Any]) -> Delta:
-    source_raw = d.get("source")
     return Delta(
         type=d["type"],
         part_index=d.get("part_index", 0),
@@ -364,7 +354,7 @@ def delta_from_dict(d: dict[str, Any]) -> Delta:
         name=d.get("name"),
         url=d.get("url"),
         title=d.get("title"),
-        source=source_from_dict(source_raw) if isinstance(source_raw, dict) else None,
+        media_type=d.get("media_type"),
     )
 
 
