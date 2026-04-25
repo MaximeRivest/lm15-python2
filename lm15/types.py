@@ -55,7 +55,9 @@ PartType = Literal[
 
 FinishReason = Literal["stop", "length", "tool_call", "content_filter", "error"]
 
-ReasoningEffort = Literal["off", "adaptive", "minimal","low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal[
+    "off", "adaptive", "minimal", "low", "medium", "high", "xhigh"
+]
 
 ErrorCode = Literal[
     "auth",
@@ -80,9 +82,7 @@ def _validate_media(
     """Validate that exactly one of data/url/file_id is set."""
     provided = sum(1 for x in (data, url, file_id) if x is not None)
     if provided != 1:
-        raise ValueError(
-            f"{part_type} requires exactly one of data, url, or file_id"
-        )
+        raise ValueError(f"{part_type} requires exactly one of data, url, or file_id")
 
 
 def _decode_data(part_type: str, data: str | None) -> bytes:
@@ -100,14 +100,6 @@ def _decode_data(part_type: str, data: str | None) -> bytes:
 #
 # The atoms of content.  A discriminated union — check .type or use
 # isinstance(), then access the fields that belong to that variant.
-#
-# There is no base class with __getattr__ fallbacks.  Accessing a field
-# that doesn't exist on a variant raises AttributeError.  This is
-# deliberate: it makes incorrect code fail loudly.
-#
-# Media parts (image, audio, video, document) carry their content
-# directly — addressed by exactly one of data (base64), url, or
-# file_id.
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +107,6 @@ class TextPart:
     """A block of text content."""
 
     text: str
-    metadata: dict[str, Any] | None = None
     type: Literal["text"] = field(default="text", init=False)
 
 
@@ -128,7 +119,6 @@ class ImagePart:
     url: str | None = None
     file_id: str | None = None
     detail: Literal["low", "high", "auto"] | None = None
-    metadata: dict[str, Any] | None = None
     type: Literal["image"] = field(default="image", init=False)
 
     def __post_init__(self) -> None:
@@ -147,7 +137,6 @@ class AudioPart:
     data: str | None = None
     url: str | None = None
     file_id: str | None = None
-    metadata: dict[str, Any] | None = None
     type: Literal["audio"] = field(default="audio", init=False)
 
     def __post_init__(self) -> None:
@@ -166,7 +155,6 @@ class VideoPart:
     data: str | None = None
     url: str | None = None
     file_id: str | None = None
-    metadata: dict[str, Any] | None = None
     type: Literal["video"] = field(default="video", init=False)
 
     def __post_init__(self) -> None:
@@ -181,7 +169,6 @@ class DocumentPart:
     data: str | None = None
     url: str | None = None
     file_id: str | None = None
-    metadata: dict[str, Any] | None = None
     type: Literal["document"] = field(default="document", init=False)
 
     def __post_init__(self) -> None:
@@ -285,9 +272,9 @@ MEDIA_TYPES: tuple[type, ...] = (ImagePart, AudioPart, VideoPart, DocumentPart)
 # at module level — there's no base class to hang them on.
 
 
-def text(content: str, *, metadata: dict[str, Any] | None = None) -> TextPart:
+def text(content: str) -> TextPart:
     """Create a text part."""
-    return TextPart(text=content, metadata=metadata)
+    return TextPart(text=content)
 
 
 def thinking(content: str, *, redacted: bool = False) -> ThinkingPart:
@@ -316,16 +303,6 @@ def _encode_data(data: bytes | str) -> str:
     return data
 
 
-def _cache_metadata(cache: bool | dict[str, Any] | None) -> dict[str, Any] | None:
-    if cache is None:
-        return None
-    if cache is True:
-        return {"cache": True}
-    if isinstance(cache, dict):
-        return {"cache": cache}
-    return {"cache": bool(cache)}
-
-
 def image(
     *,
     url: str | None = None,
@@ -333,7 +310,6 @@ def image(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
-    cache: bool | dict[str, Any] | None = None,
 ) -> ImagePart:
     return ImagePart(
         media_type=media_type or "image/png",
@@ -341,7 +317,6 @@ def image(
         url=url,
         file_id=file_id,
         detail=detail,
-        metadata=_cache_metadata(cache),
     )
 
 
@@ -351,14 +326,12 @@ def audio(
     data: bytes | str | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
-    cache: bool | dict[str, Any] | None = None,
 ) -> AudioPart:
     return AudioPart(
         media_type=media_type or "audio/wav",
         data=_encode_data(data) if data is not None else None,
         url=url,
         file_id=file_id,
-        metadata=_cache_metadata(cache),
     )
 
 
@@ -368,14 +341,12 @@ def video(
     data: bytes | str | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
-    cache: bool | dict[str, Any] | None = None,
 ) -> VideoPart:
     return VideoPart(
         media_type=media_type or "video/mp4",
         data=_encode_data(data) if data is not None else None,
         url=url,
         file_id=file_id,
-        metadata=_cache_metadata(cache),
     )
 
 
@@ -385,14 +356,12 @@ def document(
     data: bytes | str | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
-    cache: bool | dict[str, Any] | None = None,
 ) -> DocumentPart:
     return DocumentPart(
         media_type=media_type or "application/pdf",
         data=_encode_data(data) if data is not None else None,
         url=url,
         file_id=file_id,
-        metadata=_cache_metadata(cache),
     )
 
 
@@ -749,6 +718,14 @@ class Request:
 
     The composed artifact sent to the model — conversation history,
     system instructions, available tools, and generation config.
+
+    cache — enable prompt caching (default ``True``).  When enabled,
+    the adapter places cache breakpoints on the system prompt and
+    conversation history so that stable prefixes are reused across
+    requests.  On Anthropic this translates to ``cache_control``
+    annotations; on OpenAI and Gemini caching is automatic.
+    Set to ``False`` only for known one-shot requests where the
+    25% Anthropic write surcharge matters.
     """
 
     model: str
@@ -756,6 +733,7 @@ class Request:
     system: str | tuple[Part, ...] | None = None
     tools: tuple[Tool, ...] = ()
     config: Config = field(default_factory=Config)
+    cache: bool = True
 
     def __post_init__(self) -> None:
         if not self.model:

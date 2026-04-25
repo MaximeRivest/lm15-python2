@@ -86,8 +86,6 @@ def part_to_dict(part: Part) -> dict[str, Any]:
 
     if isinstance(part, TextPart):
         d["text"] = part.text
-        if part.metadata is not None:
-            d["metadata"] = part.metadata
 
     elif isinstance(part, ThinkingPart):
         d["text"] = part.text
@@ -115,8 +113,6 @@ def part_to_dict(part: Part) -> dict[str, Any]:
             d["file_id"] = part.file_id
         if hasattr(part, "detail") and part.detail is not None:
             d["detail"] = part.detail
-        if part.metadata is not None:
-            d["metadata"] = part.metadata
 
     elif isinstance(part, ToolCallPart):
         d["id"] = part.id
@@ -139,7 +135,7 @@ def part_from_dict(d: dict[str, Any]) -> Part:
     t = d["type"]
 
     if t == "text":
-        return TextPart(text=d.get("text", ""), metadata=d.get("metadata"))
+        return TextPart(text=d.get("text", ""))
 
     if t == "thinking":
         return ThinkingPart(text=d.get("text", ""), redacted=d.get("redacted", False))
@@ -157,7 +153,6 @@ def part_from_dict(d: dict[str, Any]) -> Part:
             "data": d.get("data"),
             "url": d.get("url"),
             "file_id": d.get("file_id"),
-            "metadata": d.get("metadata"),
         }
         if t == "image":
             kwargs["detail"] = d.get("detail")
@@ -428,6 +423,7 @@ def request_to_dict(r: Request) -> dict[str, Any]:
         "system": system,
         "tools": [tool_to_dict(t) for t in r.tools],
         "config": config_to_dict(r.config),
+        "cache": r.cache if r.cache is False else None,  # omit when True (default)
     })
 
 
@@ -444,6 +440,7 @@ def request_from_dict(d: dict[str, Any]) -> Request:
         system=system,
         tools=tuple(tool_from_dict(t) for t in d.get("tools", [])),
         config=config_from_dict(d.get("config", {})),
+        cache=d.get("cache", True),
     )
 
 

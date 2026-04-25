@@ -404,6 +404,7 @@ class Result:
                             system=current_request.system,
                             tools=current_request.tools,
                             config=current_request.config,
+                            cache=current_request.cache,
                         )
                         rounds += 1
                         continue
