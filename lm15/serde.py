@@ -11,15 +11,18 @@ from __future__ import annotations
 from typing import Any
 
 from .types import (
+    AudioDelta,
     AudioFormat,
     AudioPart,
     BuiltinTool,
+    CitationDelta,
     CitationPart,
     Config,
     Delta,
     DocumentPart,
     ErrorDetail,
     FunctionTool,
+    ImageDelta,
     ImagePart,
     LiveClientEvent,
     LiveConfig,
@@ -31,10 +34,13 @@ from .types import (
     Request,
     Response,
     StreamEvent,
+    TextDelta,
     TextPart,
+    ThinkingDelta,
     ThinkingPart,
     RefusalPart,
     Tool,
+    ToolCallDelta,
     ToolCallPart,
     ToolChoice,
     ToolResultPart,
@@ -261,17 +267,18 @@ def tool_choice_from_dict(d: dict[str, Any]) -> ToolChoice:
 
 def reasoning_to_dict(r: Reasoning) -> dict[str, Any]:
     return _clean_mapping({
-        "enabled": r.enabled,
-        "budget": r.budget,
         "effort": r.effort,
+        "thinking_budget": r.thinking_budget,
+        "total_budget": r.total_budget,
     })
 
 
 def reasoning_from_dict(d: dict[str, Any]) -> Reasoning:
+    default_effort = "off" if d.get("enabled") is False else "medium"
     return Reasoning(
-        enabled=d.get("enabled", True),
-        budget=d.get("budget"),
-        effort=d.get("effort"),
+        effort=d.get("effort", default_effort),
+        thinking_budget=d.get("thinking_budget", d.get("budget")),
+        total_budget=d.get("total_budget"),
     )
 
 
@@ -324,33 +331,73 @@ def error_detail_from_dict(d: dict[str, Any]) -> ErrorDetail:
 # ─── Delta ───────────────────────────────────────────────────────────
 
 def delta_to_dict(d: Delta) -> dict[str, Any]:
-    return _clean_mapping({
+    out: dict[str, Any] = {
         "type": d.type,
         "part_index": d.part_index if d.part_index else None,
-        "text": d.text,
-        "data": d.data,
-        "input": d.input,
-        "id": d.id,
-        "name": d.name,
-        "url": d.url,
-        "title": d.title,
-        "media_type": d.media_type,
-    })
+    }
+
+    if isinstance(d, (TextDelta, ThinkingDelta)):
+        out["text"] = d.text
+    elif isinstance(d, AudioDelta):
+        out["data"] = d.data
+        out["media_type"] = d.media_type
+    elif isinstance(d, ImageDelta):
+        out["data"] = d.data
+        out["url"] = d.url
+        out["file_id"] = d.file_id
+        out["media_type"] = d.media_type
+    elif isinstance(d, ToolCallDelta):
+        out["input"] = d.input
+        out["id"] = d.id
+        out["name"] = d.name
+    elif isinstance(d, CitationDelta):
+        out["text"] = d.text
+        out["url"] = d.url
+        out["title"] = d.title
+    else:
+        raise TypeError(f"unsupported delta type: {type(d)}")
+
+    return {key: value for key, value in out.items() if value is not None}
 
 
 def delta_from_dict(d: dict[str, Any]) -> Delta:
-    return Delta(
-        type=d["type"],
-        part_index=d.get("part_index", 0),
-        text=d.get("text"),
-        data=d.get("data"),
-        input=d.get("input"),
-        id=d.get("id"),
-        name=d.get("name"),
-        url=d.get("url"),
-        title=d.get("title"),
-        media_type=d.get("media_type"),
-    )
+    t = d["type"]
+    part_index = d.get("part_index", 0)
+
+    if t == "text":
+        return TextDelta(text=d.get("text", ""), part_index=part_index)
+    if t == "thinking":
+        return ThinkingDelta(text=d.get("text", ""), part_index=part_index)
+    if t == "audio":
+        return AudioDelta(
+            data=d.get("data", ""),
+            part_index=part_index,
+            media_type=d.get("media_type"),
+        )
+    if t == "image":
+        return ImageDelta(
+            data=d.get("data"),
+            url=d.get("url"),
+            file_id=d.get("file_id"),
+            part_index=part_index,
+            media_type=d.get("media_type"),
+        )
+    if t == "tool_call":
+        return ToolCallDelta(
+            input=d.get("input", ""),
+            part_index=part_index,
+            id=d.get("id"),
+            name=d.get("name"),
+        )
+    if t == "citation":
+        return CitationDelta(
+            text=d.get("text"),
+            url=d.get("url"),
+            title=d.get("title"),
+            part_index=part_index,
+        )
+
+    raise ValueError(f"unsupported delta type: {t}")
 
 
 # ─── Usage ───────────────────────────────────────────────────────────

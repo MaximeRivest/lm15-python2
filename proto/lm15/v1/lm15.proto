@@ -1,0 +1,531 @@
+syntax = "proto3";
+
+package lm15.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/wrappers.proto";
+
+option go_package = "github.com/lm15/lm15/gen/lm15/v1;lm15v1";
+option java_multiple_files = true;
+option java_outer_classname = "Lm15Proto";
+option java_package = "dev.lm15.v1";
+
+// lm15.v1 is the language-neutral schema for the lm15 core vocabulary.
+//
+// It intentionally models universal concepts only. Provider-specific request
+// knobs and response metadata belong in google.protobuf.Struct extension fields
+// and are interpreted by provider adapters.
+
+// ─── Enums ───────────────────────────────────────────────────────────
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_USER = 1;
+  ROLE_ASSISTANT = 2;
+  ROLE_TOOL = 3;
+  ROLE_DEVELOPER = 4;
+}
+
+enum FinishReason {
+  FINISH_REASON_UNSPECIFIED = 0;
+  FINISH_REASON_STOP = 1;
+  FINISH_REASON_LENGTH = 2;
+  FINISH_REASON_TOOL_CALL = 3;
+  FINISH_REASON_CONTENT_FILTER = 4;
+  FINISH_REASON_ERROR = 5;
+}
+
+enum ReasoningEffort {
+  REASONING_EFFORT_UNSPECIFIED = 0;
+  REASONING_EFFORT_OFF = 1;
+  REASONING_EFFORT_ADAPTIVE = 2;
+  REASONING_EFFORT_MINIMAL = 3;
+  REASONING_EFFORT_LOW = 4;
+  REASONING_EFFORT_MEDIUM = 5;
+  REASONING_EFFORT_HIGH = 6;
+  REASONING_EFFORT_XHIGH = 7;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_AUTH = 1;
+  ERROR_CODE_BILLING = 2;
+  ERROR_CODE_RATE_LIMIT = 3;
+  ERROR_CODE_INVALID_REQUEST = 4;
+  ERROR_CODE_CONTEXT_LENGTH = 5;
+  ERROR_CODE_TIMEOUT = 6;
+  ERROR_CODE_SERVER = 7;
+  ERROR_CODE_PROVIDER = 8;
+}
+
+enum ImageDetail {
+  IMAGE_DETAIL_UNSPECIFIED = 0;
+  IMAGE_DETAIL_LOW = 1;
+  IMAGE_DETAIL_HIGH = 2;
+  IMAGE_DETAIL_AUTO = 3;
+}
+
+enum ToolChoiceMode {
+  TOOL_CHOICE_MODE_UNSPECIFIED = 0;
+  TOOL_CHOICE_MODE_AUTO = 1;
+  TOOL_CHOICE_MODE_REQUIRED = 2;
+  TOOL_CHOICE_MODE_NONE = 3;
+}
+
+enum AudioEncoding {
+  AUDIO_ENCODING_UNSPECIFIED = 0;
+  AUDIO_ENCODING_PCM16 = 1;
+  AUDIO_ENCODING_OPUS = 2;
+  AUDIO_ENCODING_MP3 = 3;
+  AUDIO_ENCODING_AAC = 4;
+}
+
+// ─── Parts ───────────────────────────────────────────────────────────
+
+message Part {
+  oneof kind {
+    TextPart text = 1;
+    ImagePart image = 2;
+    AudioPart audio = 3;
+    VideoPart video = 4;
+    DocumentPart document = 5;
+    ToolCallPart tool_call = 6;
+    ToolResultPart tool_result = 7;
+    ThinkingPart thinking = 8;
+    RefusalPart refusal = 9;
+    CitationPart citation = 10;
+  }
+}
+
+message PartList {
+  repeated Part parts = 1;
+}
+
+message TextPart {
+  string text = 1;
+}
+
+message MediaSource {
+  string media_type = 1;
+
+  oneof source {
+    // Inline bytes. In protobuf JSON, bytes are encoded as base64 strings.
+    bytes data = 2;
+    string url = 3;
+    string file_id = 4;
+  }
+}
+
+message ImagePart {
+  MediaSource source = 1;
+  ImageDetail detail = 2;
+}
+
+message AudioPart {
+  MediaSource source = 1;
+}
+
+message VideoPart {
+  MediaSource source = 1;
+}
+
+message DocumentPart {
+  MediaSource source = 1;
+}
+
+message ToolCallPart {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Struct input = 3;
+}
+
+message ToolResultPart {
+  string id = 1;
+  repeated Part content = 2;
+  google.protobuf.StringValue name = 3;
+  bool is_error = 4;
+}
+
+message ThinkingPart {
+  string text = 1;
+  bool redacted = 2;
+}
+
+message RefusalPart {
+  string text = 1;
+}
+
+message CitationPart {
+  google.protobuf.StringValue url = 1;
+  google.protobuf.StringValue title = 2;
+  google.protobuf.StringValue text = 3;
+}
+
+// ─── Messages ────────────────────────────────────────────────────────
+
+message Message {
+  Role role = 1;
+  repeated Part parts = 2;
+}
+
+message SystemContent {
+  oneof kind {
+    string text = 1;
+    PartList parts = 2;
+  }
+}
+
+// ─── Deltas and stream events ────────────────────────────────────────
+
+message Delta {
+  oneof kind {
+    TextDelta text = 1;
+    ThinkingDelta thinking = 2;
+    AudioDelta audio = 3;
+    ImageDelta image = 4;
+    ToolCallDelta tool_call = 5;
+    CitationDelta citation = 6;
+  }
+}
+
+message TextDelta {
+  string text = 1;
+  int32 part_index = 2;
+}
+
+message ThinkingDelta {
+  string text = 1;
+  int32 part_index = 2;
+}
+
+message AudioDelta {
+  bytes data = 1;
+  int32 part_index = 2;
+  google.protobuf.StringValue media_type = 3;
+}
+
+message ImageDelta {
+  int32 part_index = 1;
+  google.protobuf.StringValue media_type = 2;
+
+  oneof source {
+    bytes data = 3;
+    string url = 4;
+    string file_id = 5;
+  }
+}
+
+message ToolCallDelta {
+  string input = 1;
+  int32 part_index = 2;
+  google.protobuf.StringValue id = 3;
+  google.protobuf.StringValue name = 4;
+}
+
+message CitationDelta {
+  google.protobuf.StringValue text = 1;
+  google.protobuf.StringValue url = 2;
+  google.protobuf.StringValue title = 3;
+  int32 part_index = 4;
+}
+
+message StreamEvent {
+  oneof event {
+    StartEvent start = 1;
+    DeltaEvent delta = 2;
+    EndEvent end = 3;
+    ErrorEvent error = 4;
+  }
+}
+
+message StartEvent {
+  google.protobuf.StringValue id = 1;
+  google.protobuf.StringValue model = 2;
+}
+
+message DeltaEvent {
+  Delta delta = 1;
+}
+
+message EndEvent {
+  FinishReason finish_reason = 1;
+  Usage usage = 2;
+  google.protobuf.Struct provider_data = 3;
+}
+
+message ErrorEvent {
+  ErrorDetail error = 1;
+}
+
+message ErrorDetail {
+  ErrorCode code = 1;
+  string message = 2;
+  google.protobuf.StringValue provider_code = 3;
+}
+
+// ─── Tools ───────────────────────────────────────────────────────────
+
+message Tool {
+  oneof kind {
+    FunctionTool function = 1;
+    BuiltinTool builtin = 2;
+  }
+}
+
+message FunctionTool {
+  string name = 1;
+  google.protobuf.StringValue description = 2;
+  google.protobuf.Struct parameters = 3;
+}
+
+message BuiltinTool {
+  string name = 1;
+  google.protobuf.Struct config = 2;
+}
+
+message ToolCallInfo {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Struct input = 3;
+}
+
+// ─── Configuration ───────────────────────────────────────────────────
+
+message Reasoning {
+  ReasoningEffort effort = 1;
+  google.protobuf.Int32Value thinking_budget = 2;
+  google.protobuf.Int32Value total_budget = 3;
+}
+
+message ToolChoice {
+  ToolChoiceMode mode = 1;
+  repeated string allowed = 2;
+  google.protobuf.BoolValue parallel = 3;
+}
+
+message Config {
+  google.protobuf.Int32Value max_tokens = 1;
+  google.protobuf.DoubleValue temperature = 2;
+  google.protobuf.DoubleValue top_p = 3;
+  google.protobuf.Int32Value top_k = 4;
+  repeated string stop = 5;
+  google.protobuf.Struct response_format = 6;
+  ToolChoice tool_choice = 7;
+  Reasoning reasoning = 8;
+  google.protobuf.Struct extensions = 9;
+}
+
+// ─── Request / Response ──────────────────────────────────────────────
+
+message Request {
+  string model = 1;
+  repeated Message messages = 2;
+  SystemContent system = 3;
+  repeated Tool tools = 4;
+  Config config = 5;
+
+  // If absent, SDKs should apply lm15's default: cache enabled.
+  google.protobuf.BoolValue cache = 6;
+}
+
+message Usage {
+  int64 input_tokens = 1;
+  int64 output_tokens = 2;
+  int64 total_tokens = 3;
+  google.protobuf.Int64Value cache_read_tokens = 4;
+  google.protobuf.Int64Value cache_write_tokens = 5;
+  google.protobuf.Int64Value reasoning_tokens = 6;
+  google.protobuf.Int64Value input_audio_tokens = 7;
+  google.protobuf.Int64Value output_audio_tokens = 8;
+}
+
+message Response {
+  string id = 1;
+  string model = 2;
+  Message message = 3;
+  FinishReason finish_reason = 4;
+  Usage usage = 5;
+  google.protobuf.Struct provider_data = 6;
+}
+
+// ─── Embeddings ──────────────────────────────────────────────────────
+
+message EmbeddingRequest {
+  string model = 1;
+  repeated string inputs = 2;
+  google.protobuf.Struct extensions = 3;
+}
+
+message EmbeddingResponse {
+  string model = 1;
+  repeated Vector vectors = 2;
+  Usage usage = 3;
+  google.protobuf.Struct provider_data = 4;
+}
+
+message Vector {
+  repeated double values = 1;
+}
+
+// ─── File Upload ─────────────────────────────────────────────────────
+
+message FileUploadRequest {
+  google.protobuf.StringValue model = 1;
+  string filename = 2;
+  bytes bytes_data = 3;
+  string media_type = 4;
+  google.protobuf.Struct extensions = 5;
+}
+
+message FileUploadResponse {
+  string id = 1;
+  google.protobuf.Struct provider_data = 2;
+}
+
+// ─── Batch ───────────────────────────────────────────────────────────
+
+message BatchRequest {
+  string model = 1;
+  repeated Request requests = 2;
+  google.protobuf.Struct extensions = 3;
+}
+
+message BatchResponse {
+  string id = 1;
+  string status = 2;
+  google.protobuf.Struct provider_data = 3;
+}
+
+// ─── Image / Audio generation ────────────────────────────────────────
+
+message ImageGenerationRequest {
+  string model = 1;
+  string prompt = 2;
+  google.protobuf.StringValue size = 3;
+  google.protobuf.Struct extensions = 4;
+}
+
+message ImageGenerationResponse {
+  repeated ImagePart images = 1;
+  google.protobuf.Struct provider_data = 2;
+}
+
+message AudioGenerationRequest {
+  string model = 1;
+  string prompt = 2;
+  google.protobuf.StringValue voice = 3;
+  google.protobuf.StringValue format = 4;
+  google.protobuf.Struct extensions = 5;
+}
+
+message AudioGenerationResponse {
+  AudioPart audio = 1;
+  google.protobuf.Struct provider_data = 2;
+}
+
+message EndpointRequest {
+  oneof kind {
+    Request request = 1;
+    EmbeddingRequest embedding_request = 2;
+    FileUploadRequest file_upload_request = 3;
+    BatchRequest batch_request = 4;
+    ImageGenerationRequest image_generation_request = 5;
+    AudioGenerationRequest audio_generation_request = 6;
+  }
+}
+
+message EndpointResponse {
+  oneof kind {
+    Response response = 1;
+    EmbeddingResponse embedding_response = 2;
+    FileUploadResponse file_upload_response = 3;
+    BatchResponse batch_response = 4;
+    ImageGenerationResponse image_generation_response = 5;
+    AudioGenerationResponse audio_generation_response = 6;
+  }
+}
+
+// ─── Live (Realtime) ─────────────────────────────────────────────────
+
+message AudioFormat {
+  AudioEncoding encoding = 1;
+  int32 sample_rate = 2;
+  int32 channels = 3;
+}
+
+message LiveConfig {
+  string model = 1;
+  SystemContent system = 2;
+  repeated Tool tools = 3;
+  google.protobuf.StringValue voice = 4;
+  AudioFormat input_format = 5;
+  AudioFormat output_format = 6;
+  google.protobuf.Struct extensions = 7;
+}
+
+message LiveClientEvent {
+  oneof event {
+    LiveClientAudio audio = 1;
+    LiveClientVideo video = 2;
+    LiveClientText text = 3;
+    LiveClientToolResult tool_result = 4;
+    LiveClientInterrupt interrupt = 5;
+    LiveClientEndAudio end_audio = 6;
+  }
+}
+
+message LiveClientAudio {
+  bytes data = 1;
+}
+
+message LiveClientVideo {
+  bytes data = 1;
+}
+
+message LiveClientText {
+  string text = 1;
+}
+
+message LiveClientToolResult {
+  string id = 1;
+  repeated Part content = 2;
+}
+
+message LiveClientInterrupt {}
+
+message LiveClientEndAudio {}
+
+message LiveServerEvent {
+  oneof event {
+    LiveServerAudio audio = 1;
+    LiveServerText text = 2;
+    LiveServerToolCall tool_call = 3;
+    LiveServerInterrupted interrupted = 4;
+    LiveServerTurnEnd turn_end = 5;
+    LiveServerError error = 6;
+  }
+}
+
+message LiveServerAudio {
+  bytes data = 1;
+}
+
+message LiveServerText {
+  string text = 1;
+}
+
+message LiveServerToolCall {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Struct input = 3;
+}
+
+message LiveServerInterrupted {}
+
+message LiveServerTurnEnd {
+  Usage usage = 1;
+}
+
+message LiveServerError {
+  ErrorDetail error = 1;
+}
