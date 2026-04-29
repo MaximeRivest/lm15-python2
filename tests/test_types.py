@@ -12,6 +12,7 @@ from lm15.serde import (
 from lm15.types import (
     AudioDelta,
     AudioPart,
+    BatchRequest,
     CitationPart,
     Config,
     DocumentPart,
@@ -27,6 +28,7 @@ from lm15.types import (
     Message,
     Reasoning,
     RefusalPart,
+    Request,
     Response,
     StreamEvent,
     TextDelta,
@@ -146,6 +148,21 @@ def test_response_json_extracts_fenced_json_with_surrounding_text() -> None:
     assert response.json == {"a": 1}
 
 
+def test_response_json_cache_is_immutable() -> None:
+    response = Response(
+        id="r1",
+        model="m",
+        message=Message.assistant('{"items": [1]}'),
+        finish_reason="stop",
+        usage=Usage(),
+    )
+
+    parsed = response.json
+    with pytest.raises(TypeError):
+        parsed["items"].append(2)
+    assert response.json == {"items": [1]}
+
+
 def test_delta_variants_are_proper_unions() -> None:
     delta = TextDelta("hello")
 
@@ -154,11 +171,20 @@ def test_delta_variants_are_proper_unions() -> None:
     assert not hasattr(delta, "data")
 
 
-def test_image_delta_requires_exactly_one_media_address() -> None:
-    with pytest.raises(ValueError, match="requires exactly one"):
-        ImageDelta()
+def test_delta_text_payloads_must_be_strings() -> None:
+    with pytest.raises(TypeError, match="TextDelta.text"):
+        TextDelta(123)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="input"):
+        ToolCallDelta(input={})  # type: ignore[arg-type]
 
-    with pytest.raises(ValueError, match="media_type"):
+
+def test_image_delta_accepts_partial_chunks_and_metadata() -> None:
+    assert ImageDelta().data is None
+    assert ImageDelta(data="abc").data == "abc"
+    assert ImageDelta(data="").data == ""
+    assert ImageDelta(media_type="image/png").media_type == "image/png"
+
+    with pytest.raises(TypeError, match="media_type"):
         ImageDelta(
             url="https://example.com/image.png",
             media_type=123,  # type: ignore[arg-type]
@@ -241,11 +267,28 @@ def test_sequence_inputs_are_normalized_to_tuples() -> None:
     assert config.stop == ("END",)
 
 
-def test_tool_choice_allowed_accepts_tool_objects() -> None:
+def test_tool_choice_allowed_accepts_single_names_and_tool_objects() -> None:
     lookup = FunctionTool(name="lookup")
 
+    assert ToolChoice(allowed="lookup").allowed == ("lookup",)
     assert ToolChoice(allowed=[lookup]).allowed == ("lookup",)
     assert ToolChoice(allowed=lookup).allowed == ("lookup",)
+
+
+def test_message_tool_accepts_single_tool_result_part() -> None:
+    result = ToolResultPart(id="call_1", content=(TextPart("ok"),))
+
+    assert Message.tool(result).parts == (result,)
+
+
+def test_batch_request_infers_model_and_allows_mixed_nested_models() -> None:
+    first = Request(model="m1", messages=(Message.user("one"),))
+    second = Request(model="m2", messages=(Message.user("two"),))
+
+    batch = BatchRequest(requests=(first, second))
+
+    assert batch.model == "m1"
+    assert [request.model for request in batch.requests] == ["m1", "m2"]
 
 
 def test_stream_events_validate_type_specific_fields() -> None:
@@ -332,9 +375,11 @@ def test_numeric_validators_reject_bool() -> None:
         TextDelta(text="x", part_index=True)  # type: ignore[arg-type]
 
 
-def test_audio_delta_validates_base64_data() -> None:
-    with pytest.raises(ValueError, match="base64"):
-        AudioDelta(data="not base64!@#")
+def test_audio_delta_accepts_partial_chunks_and_metadata() -> None:
+    assert AudioDelta(data="not base64!@#").data == "not base64!@#"
+    assert AudioDelta(data="").data == ""
+    assert AudioDelta(media_type="audio/wav").media_type == "audio/wav"
+    assert AudioDelta(url="https://example.com/a.wav").url == "https://example.com/a.wav"
     valid = AudioDelta(data=base64.b64encode(b"hi").decode("ascii"))
     assert valid.data == base64.b64encode(b"hi").decode("ascii")
 

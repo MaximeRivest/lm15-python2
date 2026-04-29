@@ -436,16 +436,21 @@ def _delta_to_proto(pb, delta):
         out.thinking.text = delta.text
         out.thinking.part_index = delta.part_index
     elif isinstance(delta, AudioDelta):
-        out.audio.data = base64.b64decode(delta.data)
         out.audio.part_index = delta.part_index
         if delta.media_type is not None:
             _set_wrapper(out.audio.media_type, delta.media_type)
+        if delta.data is not None:
+            out.audio.data = delta.data
+        elif delta.url is not None:
+            out.audio.url = delta.url
+        elif delta.file_id is not None:
+            out.audio.file_id = delta.file_id
     elif isinstance(delta, ImageDelta):
         out.image.part_index = delta.part_index
         if delta.media_type is not None:
             _set_wrapper(out.image.media_type, delta.media_type)
         if delta.data is not None:
-            out.image.data = base64.b64decode(delta.data)
+            out.image.data = delta.data
         elif delta.url is not None:
             out.image.url = delta.url
         elif delta.file_id is not None:
@@ -738,11 +743,18 @@ def _delta_from_proto(pb, msg):
     if kind == "thinking":
         return ThinkingDelta(text=msg.thinking.text, part_index=msg.thinking.part_index)
     if kind == "audio":
-        return AudioDelta(
-            data=_b64(msg.audio.data),
-            part_index=msg.audio.part_index,
-            media_type=_wrapper_value(msg.audio, "media_type"),
-        )
+        source = msg.audio.WhichOneof("source")
+        kwargs = {
+            "part_index": msg.audio.part_index,
+            "media_type": _wrapper_value(msg.audio, "media_type"),
+        }
+        if source == "data":
+            kwargs["data"] = msg.audio.data
+        elif source == "url":
+            kwargs["url"] = msg.audio.url
+        elif source == "file_id":
+            kwargs["file_id"] = msg.audio.file_id
+        return AudioDelta(**kwargs)
     if kind == "image":
         source = msg.image.WhichOneof("source")
         kwargs = {
@@ -750,7 +762,7 @@ def _delta_from_proto(pb, msg):
             "media_type": _wrapper_value(msg.image, "media_type"),
         }
         if source == "data":
-            kwargs["data"] = _b64(msg.image.data)
+            kwargs["data"] = msg.image.data
         elif source == "url":
             kwargs["url"] = msg.image.url
         elif source == "file_id":
@@ -1357,7 +1369,9 @@ def _file_upload_response_from_proto(pb, msg):
 
 
 def _batch_request_to_proto(pb, value: BatchRequest):
-    out = pb.BatchRequest(model=value.model)
+    out = pb.BatchRequest()
+    if value.model is not None:
+        _set_wrapper(out.model, value.model)
     out.requests.extend(_request_to_proto(pb, r) for r in value.requests)
     _copy_struct(out.extensions, value.extensions)
     return out
@@ -1365,7 +1379,7 @@ def _batch_request_to_proto(pb, value: BatchRequest):
 
 def _batch_request_from_proto(pb, msg):
     return BatchRequest(
-        model=msg.model,
+        model=_wrapper_value(msg, "model"),
         requests=tuple(_request_from_proto(pb, r) for r in msg.requests),
         extensions=_struct_value(msg, "extensions"),
     )

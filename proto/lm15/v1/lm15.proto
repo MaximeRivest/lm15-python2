@@ -199,9 +199,14 @@ message ThinkingDelta {
 }
 
 message AudioDelta {
-  bytes data = 1;
-  int32 part_index = 2;
-  google.protobuf.StringValue media_type = 3;
+  int32 part_index = 1;
+  google.protobuf.StringValue media_type = 2;
+
+  oneof source {
+    string data = 3;
+    string url = 4;
+    string file_id = 5;
+  }
 }
 
 message ImageDelta {
@@ -209,7 +214,7 @@ message ImageDelta {
   google.protobuf.StringValue media_type = 2;
 
   oneof source {
-    bytes data = 3;
+    string data = 3;
     string url = 4;
     string file_id = 5;
   }
@@ -385,7 +390,8 @@ message FileUploadResponse {
 // ─── Batch ───────────────────────────────────────────────────────────
 
 message BatchRequest {
-  string model = 1;
+  // Optional routing hint. Each nested Request carries its own model.
+  google.protobuf.StringValue model = 1;
   repeated Request requests = 2;
   google.protobuf.Struct extensions = 3;
 }

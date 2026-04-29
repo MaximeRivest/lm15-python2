@@ -307,6 +307,26 @@ def _validate_text(value: Any, *, field_name: str, allow_empty: bool = True) -> 
         raise ValueError(f"{field_name} cannot be empty")
 
 
+def _validate_optional_text(
+    value: Any, *, field_name: str, allow_empty: bool = True
+) -> None:
+    """Validate that an optional value is either None or a string."""
+    if value is not None:
+        _validate_text(value, field_name=field_name, allow_empty=allow_empty)
+
+
+def _validate_bool(value: Any, *, field_name: str) -> None:
+    """Validate that value is exactly a bool."""
+    if not isinstance(value, bool):
+        raise TypeError(f"{field_name} must be a bool")
+
+
+def _validate_optional_bool(value: Any, *, field_name: str) -> None:
+    """Validate that an optional value is either None or exactly a bool."""
+    if value is not None:
+        _validate_bool(value, field_name=field_name)
+
+
 # ─── Media helpers ────────────────────────────────────────────────────
 
 
@@ -326,6 +346,19 @@ def _validate_media(
         raise TypeError(f"{part_type} {name} must be a string")
     if value == "":
         raise ValueError(f"{part_type} {name} cannot be empty")
+
+
+def _validate_media_delta_addresses(
+    part_type: str, data: str | None, url: str | None, file_id: str | None
+) -> None:
+    """Validate media-delta address shape without requiring a final address."""
+    provided = [
+        name
+        for name, value in (("data", data), ("url", url), ("file_id", file_id))
+        if value is not None
+    ]
+    if len(provided) > 1:
+        raise ValueError(f"{part_type} can include at most one of data, url, or file_id")
 
 
 _BASE64_RE = _re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
@@ -367,6 +400,16 @@ def _base64_summary(data: str | None) -> str | None:
     if data is None:
         return None
     payload = _base64_payload("media", data)
+    return f"<base64: {len(payload)} chars>"
+
+
+def _base64_chunk_summary(data: str | None) -> str | None:
+    """Return a repr-safe summary for a possibly partial base64 chunk."""
+    if data is None:
+        return None
+    if data.startswith("data:") and ";base64," in data:
+        data = data.split(";base64,", 1)[1]
+    payload = "".join(data.split())
     return f"<base64: {len(payload)} chars>"
 
 
@@ -437,6 +480,12 @@ class ImagePart(_MediaMixin):
     detail: Literal["low", "high", "auto"] | None = None
     type: Literal["image"] = field(default="image", init=False)
 
+    def __post_init__(self) -> None:
+        _MediaMixin.__post_init__(self)
+        _validate_optional_text(self.detail, field_name="ImagePart.detail", allow_empty=False)
+        if self.detail is not None and self.detail not in {"low", "high", "auto"}:
+            raise ValueError(f"unsupported ImagePart.detail: {self.detail}")
+
 
 @dataclass(frozen=True, slots=True, repr=False)
 class AudioPart(_MediaMixin):
@@ -472,10 +521,8 @@ class ToolCallPart:
     type: Literal["tool_call"] = field(default="tool_call", init=False)
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("ToolCallPart requires id")
-        if not self.name:
-            raise ValueError("ToolCallPart requires name")
+        _validate_text(self.id, field_name="ToolCallPart.id", allow_empty=False)
+        _validate_text(self.name, field_name="ToolCallPart.name", allow_empty=False)
         _freeze_field(self, "input", required=True)
 
 
@@ -490,15 +537,14 @@ class ToolResultPart:
     type: Literal["tool_result"] = field(default="tool_result", init=False)
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("ToolResultPart requires id")
+        _validate_text(self.id, field_name="ToolResultPart.id", allow_empty=False)
+        _validate_optional_text(self.name, field_name="ToolResultPart.name", allow_empty=False)
         object.__setattr__(self, "content", tuple(self.content))
         if not self.content:
             raise ValueError("ToolResultPart requires content")
         if not all(_is_part(p) for p in self.content):
             raise TypeError("ToolResultPart.content must contain Part objects")
-        if not isinstance(self.is_error, bool):
-            raise TypeError("ToolResultPart.is_error must be a bool")
+        _validate_bool(self.is_error, field_name="ToolResultPart.is_error")
         # Tool results may not contain protocol parts: tool calls, nested
         # tool results, model reasoning traces, or refusals.  Only the
         # presentational variants from ToolResultContentPart are allowed.
@@ -519,8 +565,7 @@ class ThinkingPart:
 
     def __post_init__(self) -> None:
         _validate_text(self.text, field_name="ThinkingPart.text")
-        if not isinstance(self.redacted, bool):
-            raise TypeError("ThinkingPart.redacted must be a bool")
+        _validate_bool(self.redacted, field_name="ThinkingPart.redacted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -549,6 +594,9 @@ class CitationPart:
     type: Literal["citation"] = field(default="citation", init=False)
 
     def __post_init__(self) -> None:
+        _validate_optional_text(self.url, field_name="CitationPart.url", allow_empty=False)
+        _validate_optional_text(self.title, field_name="CitationPart.title", allow_empty=False)
+        _validate_optional_text(self.text, field_name="CitationPart.text", allow_empty=False)
         if self.url is None and self.title is None and self.text is None:
             raise ValueError("CitationPart requires at least one of url, title, or text")
 
@@ -611,8 +659,28 @@ ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[ToolResult
 PromptPart: TypeAlias = (
     TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
 )
-PartInput: TypeAlias = str | PromptPart | Sequence[PromptPart]
-SystemContent: TypeAlias = str | PromptPart | Sequence[PromptPart]
+PromptContent: TypeAlias = str | PromptPart | Sequence[PromptPart]
+SystemContent: TypeAlias = PromptContent
+
+# Parts allowed in assistant messages.  This intentionally includes
+# model-emitted protocol/artifact parts while still excluding ToolResultPart,
+# which belongs only in tool messages.
+AssistantPart: TypeAlias = (
+    TextPart
+    | ImagePart
+    | AudioPart
+    | VideoPart
+    | DocumentPart
+    | ToolCallPart
+    | ThinkingPart
+    | RefusalPart
+    | CitationPart
+)
+AssistantContent: TypeAlias = str | AssistantPart | Sequence[AssistantPart]
+
+# Backwards-compatible broad content alias used by the normalizer; role-specific
+# constructors expose narrower aliases above.
+PartInput: TypeAlias = str | Part | Sequence[Part]
 
 # Parts forbidden in prompts (user/developer messages and system content).
 # Defined once and reused by every prompt-side validator.
@@ -855,15 +923,15 @@ class Message:
         _validate_message_parts(self.role, self.parts)
 
     @staticmethod
-    def user(content: PartInput) -> "Message":
+    def user(content: PromptContent) -> "Message":
         return Message(role="user", parts=_normalize_parts(content))
 
     @staticmethod
-    def assistant(content: PartInput) -> "Message":
+    def assistant(content: AssistantContent) -> "Message":
         return Message(role="assistant", parts=_normalize_parts(content))
 
     @staticmethod
-    def developer(content: PartInput) -> "Message":
+    def developer(content: PromptContent) -> "Message":
         """Create a developer message.
 
         Developer messages carry instructions with higher authority than
@@ -881,19 +949,19 @@ class Message:
 
     @staticmethod
     def tool(
-        results: Sequence[ToolResultPart] | dict[str, ToolResultContent],
+        results: ToolResultPart | Sequence[ToolResultPart] | dict[str, ToolResultContent],
     ) -> "Message":
         """Create a tool message.
 
-        Accepts either a list of ToolResultParts or a dict mapping
-        call_id → output (str, Part, or list[Part]).
+        Accepts a single ToolResultPart, a list of ToolResultParts, or a dict
+        mapping call_id → output (str, Part, or list[Part]).
         """
         if isinstance(results, dict):
             parts: list[Part] = []
             for call_id, value in results.items():
                 parts.append(tool_result(call_id, value))
             return Message(role="tool", parts=tuple(parts))
-        parts = tuple(results)
+        parts = (results,) if isinstance(results, ToolResultPart) else tuple(results)
         if not all(isinstance(p, ToolResultPart) for p in parts):
             raise TypeError("Message.tool() requires ToolResultPart objects")
         return Message(role="tool", parts=parts)
@@ -908,7 +976,7 @@ class Message:
 
     @property
     def text(self) -> str | None:
-        """Concatenated text from all TextParts, or None."""
+        """Newline-joined text from all TextParts, or None."""
         texts = [p.text for p in self.parts_of(TextPart)]
         return "\n".join(texts) if texts else None
 
@@ -1042,6 +1110,7 @@ class TextDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
+        _validate_text(self.text, field_name="TextDelta.text")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1054,31 +1123,39 @@ class ThinkingDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
+        _validate_text(self.text, field_name="ThinkingDelta.text")
 
 
 @dataclass(frozen=True, slots=True, repr=False)
 class AudioDelta:
-    """An audio data fragment arriving during streaming."""
+    """An audio fragment arriving during streaming.
 
-    data: str
+    Media deltas are partial stream chunks, not final media parts.  They may
+    carry unaligned base64 data, a URL/file id update, or metadata only; final
+    media validation happens when the stream is assembled into an AudioPart.
+    """
+
+    data: str | None = None
+    url: str | None = None
+    file_id: str | None = None
     part_index: int = 0
     media_type: str | None = None
     type: Literal["audio"] = field(default="audio", init=False)
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
-        if not isinstance(self.data, str) or self.data == "":
-            raise ValueError("AudioDelta data must be a non-empty base64 string")
-        _decode_data("AudioDelta", self.data)
-        if self.media_type is not None and (
-            not isinstance(self.media_type, str) or self.media_type == ""
-        ):
-            raise ValueError("AudioDelta media_type cannot be empty")
+        _validate_optional_text(self.data, field_name="AudioDelta.data")
+        _validate_optional_text(self.url, field_name="AudioDelta.url")
+        _validate_optional_text(self.file_id, field_name="AudioDelta.file_id")
+        _validate_media_delta_addresses("AudioDelta", self.data, self.url, self.file_id)
+        _validate_optional_text(self.media_type, field_name="AudioDelta.media_type", allow_empty=False)
 
     def __repr__(self) -> str:
         return (
             "AudioDelta("
-            f"data={_base64_summary(self.data)!r}, "
+            f"data={_base64_chunk_summary(self.data)!r}, "
+            f"url={self.url!r}, "
+            f"file_id={self.file_id!r}, "
             f"part_index={self.part_index!r}, "
             f"media_type={self.media_type!r})"
         )
@@ -1097,18 +1174,16 @@ class ImageDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
-        if self.media_type is not None and (
-            not isinstance(self.media_type, str) or self.media_type == ""
-        ):
-            raise ValueError("ImageDelta media_type cannot be empty")
-        _validate_media("ImageDelta", self.data, self.url, self.file_id)
-        if self.data is not None:
-            _decode_data("ImageDelta", self.data)
+        _validate_optional_text(self.data, field_name="ImageDelta.data")
+        _validate_optional_text(self.url, field_name="ImageDelta.url")
+        _validate_optional_text(self.file_id, field_name="ImageDelta.file_id")
+        _validate_media_delta_addresses("ImageDelta", self.data, self.url, self.file_id)
+        _validate_optional_text(self.media_type, field_name="ImageDelta.media_type", allow_empty=False)
 
     def __repr__(self) -> str:
         return (
             "ImageDelta("
-            f"data={_base64_summary(self.data)!r}, "
+            f"data={_base64_chunk_summary(self.data)!r}, "
             f"url={self.url!r}, "
             f"file_id={self.file_id!r}, "
             f"part_index={self.part_index!r}, "
@@ -1128,6 +1203,9 @@ class ToolCallDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
+        _validate_text(self.input, field_name="ToolCallDelta.input")
+        _validate_optional_text(self.id, field_name="ToolCallDelta.id", allow_empty=False)
+        _validate_optional_text(self.name, field_name="ToolCallDelta.name", allow_empty=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1142,6 +1220,9 @@ class CitationDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
+        _validate_optional_text(self.text, field_name="CitationDelta.text")
+        _validate_optional_text(self.url, field_name="CitationDelta.url")
+        _validate_optional_text(self.title, field_name="CitationDelta.title")
         if self.text is None and self.url is None and self.title is None:
             raise ValueError("CitationDelta requires at least one of text, url, or title")
 
@@ -1213,6 +1294,8 @@ class ErrorDetail:
     def __post_init__(self) -> None:
         if self.code not in ERROR_CODES:
             raise ValueError(f"unsupported error code: {self.code}")
+        _validate_text(self.message, field_name="ErrorDetail.message")
+        _validate_optional_text(self.provider_code, field_name="ErrorDetail.provider_code", allow_empty=False)
 
 
 _STREAM_EVENT_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
@@ -1264,6 +1347,10 @@ class StreamEvent:
         owner = f"StreamEvent(type={self.type!r})"
         _require_fields(owner, self, _STREAM_EVENT_REQUIRED_FIELDS.get(self.type, ()))
         _forbid_fields(owner, self, _STREAM_EVENT_ALLOWED_FIELDS[self.type])
+        _validate_optional_text(self.id, field_name="StreamEvent.id", allow_empty=False)
+        _validate_optional_text(self.model, field_name="StreamEvent.model", allow_empty=False)
+        if self.finish_reason is not None and self.finish_reason not in FINISH_REASONS:
+            raise ValueError(f"unsupported finish reason: {self.finish_reason}")
         if self.delta is not None and not isinstance(self.delta, DELTA_CLASSES):
             raise TypeError("StreamEvent.delta must be a Delta")
         if self.usage is not None and not isinstance(self.usage, Usage):
@@ -1354,8 +1441,8 @@ class FunctionTool:
     type: Literal["function"] = field(default="function", init=False)
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("FunctionTool requires name")
+        _validate_text(self.name, field_name="FunctionTool.name", allow_empty=False)
+        _validate_optional_text(self.description, field_name="FunctionTool.description")
         _freeze_field(self, "parameters", required=True)
 
     @staticmethod
@@ -1394,8 +1481,7 @@ class BuiltinTool:
     type: Literal["builtin"] = field(default="builtin", init=False)
 
     def __post_init__(self) -> None:
-        if not self.name:
-            raise ValueError("BuiltinTool requires name")
+        _validate_text(self.name, field_name="BuiltinTool.name", allow_empty=False)
         _freeze_field(self, "config")
 
 
@@ -1478,11 +1564,9 @@ class ToolChoice:
     def __post_init__(self) -> None:
         if self.mode not in TOOL_CHOICE_MODES:
             raise ValueError(f"unsupported tool choice mode: {self.mode}")
-        if isinstance(self.allowed, str):
-            raise TypeError("ToolChoice.allowed must be a sequence of tool names, not a string")
         raw_allowed = (
             (self.allowed,)
-            if isinstance(self.allowed, (FunctionTool, BuiltinTool))
+            if isinstance(self.allowed, (str, FunctionTool, BuiltinTool))
             else tuple(self.allowed)
         )
         if any(isinstance(item, (FunctionTool, BuiltinTool)) for item in raw_allowed):
@@ -1499,6 +1583,7 @@ class ToolChoice:
         object.__setattr__(self, "allowed", allowed)
         if any(not isinstance(name, str) or not name for name in self.allowed):
             raise ValueError("ToolChoice.allowed must contain non-empty tool names")
+        _validate_optional_bool(self.parallel, field_name="ToolChoice.parallel")
         if self.mode == "none" and (self.allowed or self.parallel is not None):
             raise ValueError("ToolChoice(mode='none') cannot specify allowed or parallel")
 
@@ -1616,6 +1701,7 @@ class Request(_ModelRequest):
             raise ValueError("Request.tools cannot contain duplicate tool names")
         if not isinstance(self.config, Config):
             raise TypeError("Request.config must be a Config")
+        _validate_bool(self.cache, field_name="Request.cache")
         if self.config.tool_choice is not None and self.config.tool_choice.allowed:
             missing = set(self.config.tool_choice.allowed) - set(tool_names)
             if missing:
@@ -1695,10 +1781,8 @@ class Response:
     _parsed_json: Any = field(default=_MISSING, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
-        if self.id == "":
-            raise ValueError("Response.id cannot be empty; use None when unavailable")
-        if not self.model:
-            raise ValueError("Response requires model")
+        _validate_optional_text(self.id, field_name="Response.id", allow_empty=False)
+        _validate_text(self.model, field_name="Response.model", allow_empty=False)
         if not isinstance(self.message, Message):
             raise TypeError("Response.message must be a Message")
         if self.message.role != "assistant":
@@ -1751,14 +1835,16 @@ class Response:
             raise ValueError(
                 f"Cannot parse response as JSON: {e}\nRaw text: {preview}"
             ) from e
-        object.__setattr__(self, "_parsed_json", parsed)
-        return parsed
+        frozen = _freeze_json_value(parsed) if isinstance(parsed, (dict, list)) else parsed
+        object.__setattr__(self, "_parsed_json", frozen)
+        return frozen
 
     @property
     def json(self) -> Any:
         """Best-effort parsed JSON, or ``None`` when parsing is impossible.
 
-        Use ``parse_json()`` when parse failures should be reported.
+        Valid JSON ``null`` also returns ``None``; use ``parse_json()`` when
+        parse failures should be reported distinctly.
         """
         return self.parse_json(default=None)
 
@@ -1790,7 +1876,9 @@ class EmbeddingResponse:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if not self.model:
+        if not isinstance(self.model, str):
+            raise TypeError("EmbeddingResponse.model must be a string")
+        if self.model == "":
             raise ValueError("EmbeddingResponse requires model")
         if not isinstance(self.usage, Usage):
             raise TypeError("EmbeddingResponse.usage must be a Usage")
@@ -1834,18 +1922,15 @@ class FileUploadRequest:
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
-        if self.model == "":
-            raise ValueError("model cannot be empty")
-        if not self.filename:
-            raise ValueError("filename is required")
+        _validate_optional_text(self.model, field_name="FileUploadRequest.model", allow_empty=False)
+        _validate_text(self.filename, field_name="FileUploadRequest.filename", allow_empty=False)
         if not isinstance(self.bytes_data, (bytes, bytearray)):
             raise TypeError("bytes_data must be bytes")
         if not self.bytes_data:
             raise ValueError("bytes_data is required")
         if isinstance(self.bytes_data, bytearray):
             object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
-        if not self.media_type:
-            raise ValueError("media_type is required")
+        _validate_text(self.media_type, field_name="FileUploadRequest.media_type", allow_empty=False)
         _freeze_extensions_field(self)
 
     def __repr__(self) -> str:
@@ -1865,8 +1950,7 @@ class FileUploadResponse:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("FileUploadResponse requires id")
+        _validate_text(self.id, field_name="FileUploadResponse.id", allow_empty=False)
         _freeze_field(self, "provider_data")
 
 
@@ -1874,20 +1958,27 @@ class FileUploadResponse:
 
 
 @dataclass(frozen=True, slots=True)
-class BatchRequest(_ModelRequest):
-    requests: tuple[Request, ...]
+class BatchRequest:
+    """A batch of model requests.
+
+    Each nested Request carries its own model.  The optional top-level model is
+    only a routing/default convenience; when omitted, it is inferred from the
+    first nested request and does not constrain the rest of the batch.
+    """
+
+    model: str | None = None
+    requests: tuple[Request, ...] = ()
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
-        _ModelRequest.__post_init__(self)
         object.__setattr__(self, "requests", tuple(self.requests))
         if not self.requests:
             raise ValueError("requests cannot be empty")
         if not all(isinstance(r, Request) for r in self.requests):
             raise TypeError("BatchRequest.requests must contain Request objects")
-        mismatched = [r.model for r in self.requests if r.model != self.model]
-        if mismatched:
-            raise ValueError("BatchRequest.model must match every nested Request.model")
+        _validate_optional_text(self.model, field_name="BatchRequest.model", allow_empty=False)
+        if self.model is None:
+            object.__setattr__(self, "model", self.requests[0].model)
         _freeze_extensions_field(self)
 
 
@@ -1898,8 +1989,7 @@ class BatchResponse:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("BatchResponse requires id")
+        _validate_text(self.id, field_name="BatchResponse.id", allow_empty=False)
         if self.status not in BATCH_STATUSES:
             raise ValueError(f"unsupported batch status: {self.status}")
         _freeze_field(self, "provider_data")
@@ -1913,7 +2003,9 @@ class _PromptRequest(_ModelRequest):
 
     def __post_init__(self) -> None:
         _ModelRequest.__post_init__(self)
-        if not self.prompt:
+        if not isinstance(self.prompt, str):
+            raise TypeError("prompt must be a string")
+        if self.prompt == "":
             raise ValueError("prompt is required")
 
 
@@ -1927,10 +2019,7 @@ class ImageGenerationRequest(_PromptRequest):
 
     def __post_init__(self) -> None:
         _PromptRequest.__post_init__(self)
-        if self.size is not None and (
-            not isinstance(self.size, str) or self.size == ""
-        ):
-            raise ValueError("size cannot be empty")
+        _validate_optional_text(self.size, field_name="size", allow_empty=False)
         _freeze_extensions_field(self)
 
 
@@ -1943,10 +2032,8 @@ class ImageGenerationResponse:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if self.id == "":
-            raise ValueError("ImageGenerationResponse.id cannot be empty; use None when unavailable")
-        if self.model == "":
-            raise ValueError("ImageGenerationResponse.model cannot be empty; use None when unavailable")
+        _validate_optional_text(self.id, field_name="ImageGenerationResponse.id", allow_empty=False)
+        _validate_optional_text(self.model, field_name="ImageGenerationResponse.model", allow_empty=False)
         if not isinstance(self.usage, Usage):
             raise TypeError("ImageGenerationResponse.usage must be a Usage")
         object.__setattr__(self, "images", tuple(self.images))
@@ -1968,10 +2055,8 @@ class AudioGenerationRequest(_PromptRequest):
 
     def __post_init__(self) -> None:
         _PromptRequest.__post_init__(self)
-        for field_name in ("voice", "format"):
-            value = getattr(self, field_name)
-            if value is not None and (not isinstance(value, str) or value == ""):
-                raise ValueError(f"{field_name} cannot be empty")
+        _validate_optional_text(self.voice, field_name="voice", allow_empty=False)
+        _validate_optional_text(self.format, field_name="format", allow_empty=False)
         _freeze_extensions_field(self)
 
 
@@ -1984,10 +2069,8 @@ class AudioGenerationResponse:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if self.id == "":
-            raise ValueError("AudioGenerationResponse.id cannot be empty; use None when unavailable")
-        if self.model == "":
-            raise ValueError("AudioGenerationResponse.model cannot be empty; use None when unavailable")
+        _validate_optional_text(self.id, field_name="AudioGenerationResponse.id", allow_empty=False)
+        _validate_optional_text(self.model, field_name="AudioGenerationResponse.model", allow_empty=False)
         if not isinstance(self.usage, Usage):
             raise TypeError("AudioGenerationResponse.usage must be a Usage")
         if not isinstance(self.audio, AudioPart):
@@ -2055,6 +2138,7 @@ class LiveConfig(_ModelRequest):
             raise TypeError("input_format must be an AudioFormat")
         if self.output_format is not None and not isinstance(self.output_format, AudioFormat):
             raise TypeError("output_format must be an AudioFormat")
+        _validate_optional_text(self.voice, field_name="LiveConfig.voice", allow_empty=False)
         _freeze_extensions_field(self)
 
 
@@ -2112,6 +2196,11 @@ class LiveClientEvent:
         owner = f"LiveClientEvent(type={self.type!r})"
         _require_fields(owner, self, _LIVE_CLIENT_REQUIRED_FIELDS.get(self.type, ()))
         _forbid_fields(owner, self, _LIVE_CLIENT_ALLOWED_FIELDS[self.type])
+        _validate_optional_text(self.data, field_name="LiveClientEvent.data")
+        _validate_optional_text(self.text, field_name="LiveClientEvent.text")
+        _validate_optional_text(self.id, field_name="LiveClientEvent.id", allow_empty=False)
+        if self.type in {"audio", "video"}:
+            _validate_base64_data("LiveClientEvent", self.data)
         if self.type == "tool_result":
             if not all(_is_part(p) for p in self.content):
                 raise TypeError("LiveClientEvent.content must contain Part objects")
@@ -2139,6 +2228,13 @@ class LiveServerEvent:
         owner = f"LiveServerEvent(type={self.type!r})"
         _require_fields(owner, self, _LIVE_SERVER_REQUIRED_FIELDS.get(self.type, ()))
         _forbid_fields(owner, self, _LIVE_SERVER_ALLOWED_FIELDS[self.type])
+        _validate_optional_text(self.data, field_name="LiveServerEvent.data")
+        _validate_optional_text(self.text, field_name="LiveServerEvent.text")
+        _validate_optional_text(self.id, field_name="LiveServerEvent.id", allow_empty=False)
+        _validate_optional_text(self.name, field_name="LiveServerEvent.name", allow_empty=False)
+        _validate_optional_text(self.input_delta, field_name="LiveServerEvent.input_delta")
+        if self.type == "audio":
+            _validate_base64_data("LiveServerEvent", self.data)
         if self.usage is not None and not isinstance(self.usage, Usage):
             raise TypeError("LiveServerEvent.usage must be a Usage")
         if self.error is not None and not isinstance(self.error, ErrorDetail):
@@ -2167,10 +2263,8 @@ class ToolCallInfo:
     input: JsonObject
 
     def __post_init__(self) -> None:
-        if not self.id:
-            raise ValueError("ToolCallInfo requires id")
-        if not self.name:
-            raise ValueError("ToolCallInfo requires name")
+        _validate_text(self.id, field_name="ToolCallInfo.id", allow_empty=False)
+        _validate_text(self.name, field_name="ToolCallInfo.name", allow_empty=False)
         _freeze_field(self, "input", required=True)
 
     @classmethod

@@ -345,6 +345,8 @@ def delta_to_dict(d: Delta) -> dict[str, Any]:
         out["text"] = d.text
     elif isinstance(d, AudioDelta):
         out["data"] = d.data
+        out["url"] = d.url
+        out["file_id"] = d.file_id
         out["media_type"] = d.media_type
     elif isinstance(d, ImageDelta):
         out["data"] = d.data
@@ -375,7 +377,9 @@ def delta_from_dict(d: dict[str, Any]) -> Delta:
         return ThinkingDelta(text=d.get("text", ""), part_index=part_index)
     if t == "audio":
         return AudioDelta(
-            data=d.get("data", ""),
+            data=d.get("data"),
+            url=d.get("url"),
+            file_id=d.get("file_id"),
             part_index=part_index,
             media_type=d.get("media_type"),
         )
@@ -424,7 +428,7 @@ def usage_from_dict(d: dict[str, Any]) -> Usage:
     return Usage(
         input_tokens=d.get("input_tokens", 0),
         output_tokens=d.get("output_tokens", 0),
-        total_tokens=d.get("total_tokens", 0),
+        total_tokens=d.get("total_tokens"),
         cache_read_tokens=d.get("cache_read_tokens"),
         cache_write_tokens=d.get("cache_write_tokens"),
         reasoning_tokens=d.get("reasoning_tokens"),
