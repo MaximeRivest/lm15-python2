@@ -24,16 +24,33 @@ from .types import (
     FunctionTool,
     ImageDelta,
     ImagePart,
+    LiveClientAudioEvent,
+    LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientInterruptEvent,
+    LiveClientTextEvent,
+    LiveClientToolResultEvent,
+    LiveClientVideoEvent,
     LiveConfig,
+    LiveServerAudioEvent,
+    LiveServerErrorEvent,
     LiveServerEvent,
+    LiveServerInterruptedEvent,
+    LiveServerTextEvent,
+    LiveServerToolCallDeltaEvent,
+    LiveServerToolCallEvent,
+    LiveServerTurnEndEvent,
     Message,
     Part,
     PART_TYPES,
     Reasoning,
     Request,
     Response,
+    StreamDeltaEvent,
+    StreamEndEvent,
+    StreamErrorEvent,
     StreamEvent,
+    StreamStartEvent,
     TextDelta,
     TextPart,
     ThinkingDelta,
@@ -440,29 +457,37 @@ def usage_from_dict(d: dict[str, Any]) -> Usage:
 # ─── StreamEvent ─────────────────────────────────────────────────────
 
 def stream_event_to_dict(e: StreamEvent) -> dict[str, Any]:
-    return _clean_mapping({
-        "type": e.type,
-        "id": e.id,
-        "model": e.model,
-        "delta": delta_to_dict(e.delta) if e.delta else None,
-        "finish_reason": e.finish_reason,
-        "usage": usage_to_dict(e.usage) if e.usage else None,
-        "error": error_detail_to_dict(e.error) if e.error else None,
-        "provider_data": e.provider_data,
-    })
+    if isinstance(e, StreamStartEvent):
+        return _clean_mapping({"type": e.type, "id": e.id, "model": e.model})
+    if isinstance(e, StreamDeltaEvent):
+        return {"type": e.type, "delta": delta_to_dict(e.delta)}
+    if isinstance(e, StreamEndEvent):
+        return _clean_mapping({
+            "type": e.type,
+            "finish_reason": e.finish_reason,
+            "usage": usage_to_dict(e.usage) if e.usage else None,
+            "provider_data": e.provider_data,
+        })
+    if isinstance(e, StreamErrorEvent):
+        return {"type": e.type, "error": error_detail_to_dict(e.error)}
+    raise TypeError(f"unsupported stream event type: {type(e)}")
 
 
 def stream_event_from_dict(d: dict[str, Any]) -> StreamEvent:
-    return StreamEvent(
-        type=d["type"],
-        id=d.get("id"),
-        model=d.get("model"),
-        delta=delta_from_dict(d["delta"]) if isinstance(d.get("delta"), dict) else None,
-        finish_reason=d.get("finish_reason"),
-        usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
-        error=error_detail_from_dict(d["error"]) if isinstance(d.get("error"), dict) else None,
-        provider_data=d.get("provider_data"),
-    )
+    t = d["type"]
+    if t == "start":
+        return StreamStartEvent(id=d.get("id"), model=d.get("model"))
+    if t == "delta":
+        return StreamDeltaEvent(delta=delta_from_dict(d["delta"]))
+    if t == "end":
+        return StreamEndEvent(
+            finish_reason=d.get("finish_reason"),
+            usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
+            provider_data=d.get("provider_data"),
+        )
+    if t == "error":
+        return StreamErrorEvent(error=error_detail_from_dict(d["error"]))
+    raise ValueError(f"unsupported stream event type: {t}")
 
 
 # ─── Request / Response ─────────────────────────────────────────────
@@ -479,7 +504,6 @@ def request_to_dict(r: Request) -> dict[str, Any]:
         "system": system,
         "tools": [tool_to_dict(t) for t in r.tools],
         "config": config_to_dict(r.config),
-        "cache": r.cache if r.cache is False else None,  # omit when True (default)
     })
 
 
@@ -496,7 +520,6 @@ def request_from_dict(d: dict[str, Any]) -> Request:
         system=system,
         tools=tuple(tool_from_dict(t) for t in d.get("tools", [])),
         config=config_from_dict(d.get("config", {})),
-        cache=d.get("cache", True),
     )
 
 
@@ -582,48 +605,76 @@ def live_config_from_dict(d: dict[str, Any]) -> LiveConfig:
 # ─── LiveClientEvent / LiveServerEvent ───────────────────────────────
 
 def live_client_event_to_dict(e: LiveClientEvent) -> dict[str, Any]:
-    return _clean_mapping({
-        "type": e.type,
-        "data": e.data,
-        "text": e.text,
-        "id": e.id,
-        "content": [part_to_dict(p) for p in e.content],
-    })
+    if isinstance(e, (LiveClientAudioEvent, LiveClientVideoEvent)):
+        return {"type": e.type, "data": e.data}
+    if isinstance(e, LiveClientTextEvent):
+        return {"type": e.type, "text": e.text}
+    if isinstance(e, LiveClientToolResultEvent):
+        return {"type": e.type, "id": e.id, "content": [part_to_dict(p) for p in e.content]}
+    if isinstance(e, (LiveClientInterruptEvent, LiveClientEndAudioEvent)):
+        return {"type": e.type}
+    raise TypeError(f"unsupported live client event type: {type(e)}")
 
 
 def live_client_event_from_dict(d: dict[str, Any]) -> LiveClientEvent:
-    return LiveClientEvent(
-        type=d["type"],
-        data=d.get("data"),
-        text=d.get("text"),
-        id=d.get("id"),
-        content=tuple(part_from_dict(p) for p in d.get("content", [])),
-    )
+    t = d["type"]
+    if t == "audio":
+        return LiveClientAudioEvent(data=d["data"])
+    if t == "video":
+        return LiveClientVideoEvent(data=d["data"])
+    if t == "text":
+        return LiveClientTextEvent(text=d.get("text", ""))
+    if t == "tool_result":
+        return LiveClientToolResultEvent(
+            id=d["id"],
+            content=tuple(part_from_dict(p) for p in d.get("content", [])),
+        )
+    if t == "interrupt":
+        return LiveClientInterruptEvent()
+    if t == "end_audio":
+        return LiveClientEndAudioEvent()
+    raise ValueError(f"unsupported live client event type: {t}")
 
 
 def live_server_event_to_dict(e: LiveServerEvent) -> dict[str, Any]:
-    return _clean_mapping({
-        "type": e.type,
-        "data": e.data,
-        "text": e.text,
-        "id": e.id,
-        "name": e.name,
-        "input": e.input,
-        "input_delta": e.input_delta,
-        "usage": usage_to_dict(e.usage) if e.usage else None,
-        "error": error_detail_to_dict(e.error) if e.error else None,
-    })
+    if isinstance(e, LiveServerAudioEvent):
+        return {"type": e.type, "data": e.data}
+    if isinstance(e, LiveServerTextEvent):
+        return {"type": e.type, "text": e.text}
+    if isinstance(e, LiveServerToolCallEvent):
+        return {"type": e.type, "id": e.id, "name": e.name, "input": e.input}
+    if isinstance(e, LiveServerToolCallDeltaEvent):
+        return _clean_mapping({
+            "type": e.type,
+            "id": e.id,
+            "name": e.name,
+            "input_delta": e.input_delta,
+        })
+    if isinstance(e, LiveServerInterruptedEvent):
+        return {"type": e.type}
+    if isinstance(e, LiveServerTurnEndEvent):
+        return {"type": e.type, "usage": usage_to_dict(e.usage)}
+    if isinstance(e, LiveServerErrorEvent):
+        return {"type": e.type, "error": error_detail_to_dict(e.error)}
+    raise TypeError(f"unsupported live server event type: {type(e)}")
 
 
 def live_server_event_from_dict(d: dict[str, Any]) -> LiveServerEvent:
-    return LiveServerEvent(
-        type=d["type"],
-        data=d.get("data"),
-        text=d.get("text"),
-        id=d.get("id"),
-        name=d.get("name"),
-        input=d.get("input"),
-        input_delta=d.get("input_delta"),
-        usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
-        error=error_detail_from_dict(d["error"]) if isinstance(d.get("error"), dict) else None,
-    )
+    t = d["type"]
+    if t == "audio":
+        return LiveServerAudioEvent(data=d["data"])
+    if t == "text":
+        return LiveServerTextEvent(text=d.get("text", ""))
+    if t == "tool_call":
+        return LiveServerToolCallEvent(id=d["id"], name=d["name"], input=d.get("input", {}))
+    if t == "tool_call_delta":
+        return LiveServerToolCallDeltaEvent(
+            input_delta=d.get("input_delta", ""), id=d.get("id"), name=d.get("name")
+        )
+    if t == "interrupted":
+        return LiveServerInterruptedEvent()
+    if t == "turn_end":
+        return LiveServerTurnEndEvent(usage=usage_from_dict(d.get("usage", {})))
+    if t == "error":
+        return LiveServerErrorEvent(error=error_detail_from_dict(d["error"]))
+    raise ValueError(f"unsupported live server event type: {t}")

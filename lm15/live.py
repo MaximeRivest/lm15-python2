@@ -18,7 +18,13 @@ from typing import Any, Callable, Deque
 
 from .types import (
     JsonObject,
+    LiveClientAudioEvent,
+    LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientInterruptEvent,
+    LiveClientTextEvent,
+    LiveClientToolResultEvent,
+    LiveClientVideoEvent,
     LiveServerEvent,
     PART_CLASSES,
     Part,
@@ -155,23 +161,21 @@ class WebSocketLiveSession:
         events: list[LiveClientEvent] = []
 
         if audio is not None:
-            events.append(LiveClientEvent(type="audio", data=_to_base64_str(audio)))
+            events.append(LiveClientAudioEvent(data=_to_base64_str(audio)))
         if video is not None:
-            events.append(LiveClientEvent(type="video", data=_to_base64_str(video)))
+            events.append(LiveClientVideoEvent(data=_to_base64_str(video)))
         if text is not None:
-            events.append(LiveClientEvent(type="text", text=text))
+            events.append(LiveClientTextEvent(text=text))
 
         if tool_result:
             for call_id, value in tool_result.items():
                 content = tuple(_tool_result_parts(value))
-                events.append(
-                    LiveClientEvent(type="tool_result", id=call_id, content=content)
-                )
+                events.append(LiveClientToolResultEvent(id=call_id, content=content))
 
         if interrupt:
-            events.append(LiveClientEvent(type="interrupt"))
+            events.append(LiveClientInterruptEvent())
         if end_audio:
-            events.append(LiveClientEvent(type="end_audio"))
+            events.append(LiveClientEndAudioEvent())
 
         if not events:
             raise ValueError("nothing to send")

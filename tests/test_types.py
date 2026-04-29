@@ -23,14 +23,18 @@ from lm15.types import (
     ImageDelta,
     ImageGenerationRequest,
     ImagePart,
-    LiveClientEvent,
-    LiveServerEvent,
+    LiveClientToolResultEvent,
+    LiveServerInterruptedEvent,
+    LiveServerToolCallDeltaEvent,
     Message,
     Reasoning,
     RefusalPart,
     Request,
     Response,
-    StreamEvent,
+    StreamDeltaEvent,
+    StreamEndEvent,
+    StreamErrorEvent,
+    StreamStartEvent,
     TextDelta,
     TextPart,
     ThinkingPart,
@@ -131,12 +135,12 @@ def test_message_filters_power_response_helpers() -> None:
     assert message.parts_of(VideoPart) == [video]
     assert message.parts_of(DocumentPart) == [document]
     assert message.parts_of(CitationPart) == [citation]
-    assert response.text == "hello"
+    assert response.text is None
     assert response.tool_calls == []
     assert not hasattr(response, "image")
 
 
-def test_response_json_extracts_fenced_json_with_surrounding_text() -> None:
+def test_response_json_requires_exact_json() -> None:
     response = Response(
         id="r1",
         model="m",
@@ -145,10 +149,10 @@ def test_response_json_extracts_fenced_json_with_surrounding_text() -> None:
         usage=Usage(),
     )
 
-    assert response.json == {"a": 1}
+    assert response.json is None
 
 
-def test_response_json_cache_is_immutable() -> None:
+def test_response_json_returns_plain_json() -> None:
     response = Response(
         id="r1",
         model="m",
@@ -158,8 +162,8 @@ def test_response_json_cache_is_immutable() -> None:
     )
 
     parsed = response.json
-    with pytest.raises(TypeError):
-        parsed["items"].append(2)
+    parsed["items"].append(2)
+    assert parsed == {"items": [1, 2]}
     assert response.json == {"items": [1]}
 
 
@@ -205,16 +209,15 @@ def test_delta_serde_roundtrips_variant_types() -> None:
     assert delta_from_dict(delta_to_dict(TextDelta(""))) == TextDelta("")
 
 
-def test_function_tool_is_serializable_spec_without_callable() -> None:
-    def lookup(query: str) -> str:
-        """Look up a query."""
-        return query
-
-    tool = FunctionTool.from_fn(lookup)
+def test_function_tool_is_explicit_serializable_spec() -> None:
+    tool = FunctionTool(
+        name="lookup",
+        description="Look up a query.",
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}},
+    )
 
     assert tool.name == "lookup"
     assert tool.description == "Look up a query."
-    assert not hasattr(tool, "fn")
     assert "fn" not in tool_to_dict(tool)
 
 
@@ -267,12 +270,13 @@ def test_sequence_inputs_are_normalized_to_tuples() -> None:
     assert config.stop == ("END",)
 
 
-def test_tool_choice_allowed_accepts_single_names_and_tool_objects() -> None:
+def test_tool_choice_allowed_accepts_tool_names() -> None:
     lookup = FunctionTool(name="lookup")
 
     assert ToolChoice(allowed="lookup").allowed == ("lookup",)
-    assert ToolChoice(allowed=[lookup]).allowed == ("lookup",)
-    assert ToolChoice(allowed=lookup).allowed == ("lookup",)
+    assert ToolChoice.from_tools([lookup]).allowed == ("lookup",)
+    with pytest.raises(ValueError, match="tool names"):
+        ToolChoice(allowed=[lookup])  # type: ignore[list-item]
 
 
 def test_message_tool_accepts_single_tool_result_part() -> None:
@@ -291,17 +295,17 @@ def test_batch_request_infers_model_and_allows_mixed_nested_models() -> None:
     assert [request.model for request in batch.requests] == ["m1", "m2"]
 
 
-def test_stream_events_validate_type_specific_fields() -> None:
-    with pytest.raises(ValueError, match="requires delta"):
-        StreamEvent(type="delta")
+def test_stream_events_are_variant_dataclasses() -> None:
+    with pytest.raises(TypeError):
+        StreamDeltaEvent()  # type: ignore[call-arg]
 
-    with pytest.raises(ValueError, match="requires error"):
-        StreamEvent(type="error")
+    with pytest.raises(TypeError):
+        StreamErrorEvent()  # type: ignore[call-arg]
 
     # Providers do not always expose ids or usage at stream boundaries;
     # the materializer can fill sane defaults from the request.
-    assert StreamEvent(type="start").type == "start"
-    assert StreamEvent(type="end").type == "end"
+    assert StreamStartEvent().type == "start"
+    assert StreamEndEvent().type == "end"
 
 
 def test_numeric_budgets_and_usage_cannot_be_negative() -> None:
@@ -312,17 +316,13 @@ def test_numeric_budgets_and_usage_cannot_be_negative() -> None:
         Usage(input_tokens=-1)
 
 
-def test_frozen_json_object_blocks_in_place_or_assignment() -> None:
-    """Provider/tool-call payloads must remain immutable through `|=` aliases."""
-    call = ToolCallPart(id="c", name="f", input={"a": {"b": [1]}})
-    aliased = call.input
-    with pytest.raises(TypeError):
-        aliased |= {"mutated": True}
-    assert "mutated" not in call.input
+def test_json_objects_are_validated_not_wrapped() -> None:
+    payload = {"a": {"b": [1]}}
+    call = ToolCallPart(id="c", name="f", input=payload)
 
-    unwrapped = call.input.unwrap()  # type: ignore[attr-defined]
-    unwrapped["a"]["b"].append(2)  # type: ignore[index, union-attr]
-    assert call.input["a"]["b"] == [1]  # type: ignore[index]
+    assert call.input is payload
+    call.input["mutated"] = True
+    assert call.input["mutated"] is True
 
 
 def test_tool_result_rejects_thinking_and_protocol_parts() -> None:
@@ -341,13 +341,12 @@ def test_tool_result_rejects_thinking_and_protocol_parts() -> None:
 
 def test_live_client_tool_result_rejects_model_and_protocol_parts() -> None:
     with pytest.raises(TypeError, match="model or protocol parts"):
-        LiveClientEvent(
-            type="tool_result",
+        LiveClientToolResultEvent(
             id="c",
             content=(ThinkingPart("internal"),),
         )
     with pytest.raises(TypeError, match="model or protocol parts"):
-        LiveClientEvent(type="tool_result", id="c", content=(RefusalPart("no"),))
+        LiveClientToolResultEvent(id="c", content=(RefusalPart("no"),))
 
 
 def test_user_messages_reject_citations() -> None:
@@ -417,12 +416,12 @@ def test_file_upload_request_requires_payload() -> None:
 def test_live_and_stream_tool_call_deltas_are_symmetric_on_empty_input() -> None:
     """Both code paths must accept empty fragments equally."""
     ToolCallDelta(input="")  # accepted
-    LiveServerEvent(type="tool_call_delta", input_delta="")  # accepted
+    LiveServerToolCallDeltaEvent(input_delta="")  # accepted
 
 
-def test_forbid_fields_is_derived_from_dataclass_fields() -> None:
-    """Adding a field to one variant should still be rejected on others."""
-    with pytest.raises(ValueError, match="cannot include"):
-        StreamEvent(type="start", delta=TextDelta(text="x"))
-    with pytest.raises(ValueError, match="cannot include"):
-        LiveServerEvent(type="interrupted", text="oops")
+def test_event_variants_do_not_have_other_variants_fields() -> None:
+    start = StreamStartEvent()
+    interrupted = LiveServerInterruptedEvent()
+
+    assert not hasattr(start, "delta")
+    assert not hasattr(interrupted, "text")

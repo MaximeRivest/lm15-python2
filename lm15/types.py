@@ -12,21 +12,19 @@ StreamablePart / NonStreamablePart to make that boundary explicit.
 
 Design principles:
 
-1. Parts and Deltas are proper discriminated unions.  Each variant is
-   an independent frozen dataclass.  Fields that don't belong to a
-   variant don't exist on it — accessing them raises AttributeError.
-   Check .type or use isinstance() before accessing variant-specific
-   fields.
+1. Parts, Deltas, and Events are proper discriminated unions.  Each
+   variant is an independent frozen dataclass.  Fields that don't belong
+   to a variant don't exist on it — accessing them raises AttributeError.
+   Check .type or use isinstance() before accessing variant-specific fields.
 
 2. One representation per concept.  A Delta is always a typed Delta
    object, never a dict.  Tool call arguments are called "input"
    everywhere — in memory, in deltas, in serialization.
 
-3. Frozen + slotted dataclasses throughout.  Objects are immutable
-   after construction, validated once in __post_init__, hashable when
-   their scalar fields are hashable, and memory-efficient.  JSON
-   dict/list payloads are recursively frozen into dict/list-compatible
-   read-only containers with stable hashes.
+3. Frozen + slotted dataclasses throughout.  Dataclass attributes are
+   immutable after construction, validation runs once in __post_init__, and
+   JSON payloads are validated but otherwise left as ordinary Python
+   containers.
 
 4. Universal structure, provider-specific values.  The shape of a
    Request is universal.  Provider-specific configuration flows
@@ -44,18 +42,15 @@ from __future__ import annotations
 
 import base64 as _base64
 import binascii as _binascii
-import inspect as _inspect
 import json as _json
 import math as _math
 import mimetypes as _mimetypes
 import re as _re
-import warnings as _warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
-from types import NoneType, UnionType
-from typing import Annotated, Any, Callable, Literal, TypeAlias, TypeVar, Union, get_args, get_origin
+from typing import Any, Callable, Literal, TypeAlias, TypeVar, get_args
 
 
 # ─── Literal vocabularies ────────────────────────────────────────────
@@ -105,14 +100,12 @@ LiveServerEventType = Literal["audio", "text", "tool_call", "tool_call_delta", "
 ROLE_VALUES = frozenset(get_args(Role))
 FINISH_REASONS = frozenset(get_args(FinishReason))
 REASONING_EFFORTS = frozenset(get_args(ReasoningEffort))
-STREAM_EVENT_TYPES = frozenset(get_args(StreamEventType))
 BATCH_STATUSES = frozenset(get_args(BatchStatus))
 AUDIO_ENCODINGS = frozenset(get_args(AudioEncoding))
 TOOL_CHOICE_MODES = frozenset(get_args(ToolChoiceMode))
-LIVE_CLIENT_EVENT_TYPES = frozenset(get_args(LiveClientEventType))
-LIVE_SERVER_EVENT_TYPES = frozenset(get_args(LiveServerEventType))
 
 _P = TypeVar("_P")
+_MISSING: Any = object()
 
 # JSON-compatible values used for model inputs, tool schemas, provider
 # extensions, and provider metadata.  Keep these small and boring: the
@@ -124,88 +117,8 @@ JsonArray: TypeAlias = list[JsonValue]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 
-def _hashable_json_value(value: JsonValue) -> object:
-    """Return a hashable representation matching JSON equality semantics."""
-    if isinstance(value, dict):
-        return tuple(sorted((key, _hashable_json_value(item)) for key, item in value.items()))
-    if isinstance(value, list):
-        return tuple(_hashable_json_value(item) for item in value)
-    return value
-
-
-class _FrozenJsonObject(dict[str, JsonValue]):
-    """A JSON object that remains dict-compatible but cannot be mutated."""
-
-    __slots__ = ("_hash",)
-
-    def unwrap(self) -> JsonObject:
-        """Return a mutable deep copy using plain JSON containers."""
-        return _thaw_json_value(self)  # type: ignore[return-value]
-
-    def __hash__(self) -> int:
-        try:
-            return self._hash
-        except AttributeError:
-            value = hash(_hashable_json_value(self))
-            object.__setattr__(self, "_hash", value)
-            return value
-
-    def _readonly(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("JSON objects on lm15 types are immutable")
-
-    __setitem__ = _readonly
-    __delitem__ = _readonly
-    __ior__ = _readonly
-    __setattr__ = _readonly
-    clear = _readonly
-    pop = _readonly
-    popitem = _readonly
-    setdefault = _readonly
-    update = _readonly
-
-
-class _FrozenJsonArray(list[JsonValue]):
-    """A JSON array that remains list-compatible but cannot be mutated."""
-
-    __slots__ = ("_hash",)
-
-    def unwrap(self) -> JsonArray:
-        """Return a mutable deep copy using plain JSON containers."""
-        return _thaw_json_value(self)  # type: ignore[return-value]
-
-    def __hash__(self) -> int:
-        try:
-            return self._hash
-        except AttributeError:
-            value = hash(_hashable_json_value(self))
-            object.__setattr__(self, "_hash", value)
-            return value
-
-    def _readonly(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("JSON arrays on lm15 types are immutable")
-
-    __setitem__ = _readonly
-    __delitem__ = _readonly
-    __iadd__ = _readonly
-    __imul__ = _readonly
-    __setattr__ = _readonly
-    append = _readonly
-    clear = _readonly
-    extend = _readonly
-    insert = _readonly
-    pop = _readonly
-    remove = _readonly
-    reverse = _readonly
-    sort = _readonly
-
-
 def _is_json_value(value: Any) -> bool:
-    """Return True if value is representable as standard JSON.
-
-    ``bool`` is matched before ``int`` because ``bool`` is a subclass of
-    ``int`` in Python; both serialize correctly, but the explicit ordering
-    documents the intent.
-    """
+    """Return True if value is representable as standard JSON."""
     if value is None or isinstance(value, bool) or isinstance(value, (int, str)):
         return True
     if isinstance(value, float):
@@ -217,60 +130,29 @@ def _is_json_value(value: Any) -> bool:
     return False
 
 
-def _freeze_json_value(value: JsonValue) -> JsonValue:
-    """Recursively freeze JSON containers while keeping JSON-compatible shapes."""
-    if isinstance(value, _FrozenJsonObject | _FrozenJsonArray):
-        return value
-    if isinstance(value, dict):
-        return _FrozenJsonObject(
-            {key: _freeze_json_value(item) for key, item in value.items()}
-        )
-    if isinstance(value, list):
-        return _FrozenJsonArray([_freeze_json_value(item) for item in value])
-    return value
-
-
-def _thaw_json_value(value: JsonValue) -> JsonValue:
-    """Recursively copy frozen JSON containers into mutable JSON containers."""
-    if isinstance(value, dict):
-        return {key: _thaw_json_value(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_thaw_json_value(item) for item in value]
-    return value
-
-
-def _freeze_json_object(
-    value: Any, *, field_name: str, required: bool
-) -> JsonObject | None:
-    """Validate and freeze a JSON object."""
+def _check_json_object(value: Any, *, field_name: str, required: bool = False) -> None:
+    """Validate a JSON object field without copying or wrapping it."""
     if value is None:
         if required:
             raise TypeError(f"{field_name} must be a JSON object")
-        return None
+        return
     if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a JSON object")
     if not _is_json_value(value):
         raise TypeError(f"{field_name} must contain only JSON-compatible values")
-    return _freeze_json_value(value)  # type: ignore[return-value]
 
 
-def _freeze_field(obj: object, field_name: str, *, required: bool = False) -> None:
-    """Freeze a JSON object field in-place on a frozen dataclass."""
-    object.__setattr__(
-        obj,
-        field_name,
-        _freeze_json_object(
-            getattr(obj, field_name), field_name=field_name, required=required
-        ),
-    )
+def _validate_json_field(obj: object, field_name: str, *, required: bool = False) -> None:
+    """Validate a JSON object field on a dataclass."""
+    _check_json_object(getattr(obj, field_name), field_name=field_name, required=required)
 
 
-def _freeze_extensions_field(obj: object) -> None:
-    """Freeze an extensions field, normalizing an empty mapping to None."""
+def _validate_extensions_field(obj: object) -> None:
+    """Validate extensions, normalizing an empty mapping to None."""
     if getattr(obj, "extensions") == {}:
         object.__setattr__(obj, "extensions", None)
         return
-    _freeze_field(obj, "extensions")
+    _validate_json_field(obj, "extensions")
 
 
 def _validate_int(value: Any, *, field_name: str) -> None:
@@ -523,7 +405,7 @@ class ToolCallPart:
     def __post_init__(self) -> None:
         _validate_text(self.id, field_name="ToolCallPart.id", allow_empty=False)
         _validate_text(self.name, field_name="ToolCallPart.name", allow_empty=False)
-        _freeze_field(self, "input", required=True)
+        _validate_json_field(self, "input", required=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -678,7 +560,7 @@ AssistantPart: TypeAlias = (
 )
 AssistantContent: TypeAlias = str | AssistantPart | Sequence[AssistantPart]
 
-# Backwards-compatible broad content alias used by the normalizer; role-specific
+# Broad content alias used internally by the normalizer; role-specific
 # constructors expose narrower aliases above.
 PartInput: TypeAlias = str | Part | Sequence[Part]
 
@@ -976,9 +858,10 @@ class Message:
 
     @property
     def text(self) -> str | None:
-        """Newline-joined text from all TextParts, or None."""
-        texts = [p.text for p in self.parts_of(TextPart)]
-        return "\n".join(texts) if texts else None
+        """Text only when the message contains text and nothing else."""
+        if not all(isinstance(p, TextPart) for p in self.parts):
+            return None
+        return "\n".join(p.text for p in self.parts)
 
 
 def _normalize_parts(content: PartInput) -> tuple[Part, ...]:
@@ -1024,71 +907,6 @@ def _normalize_system(system: SystemContent | None) -> str | tuple[PromptPart, .
     if any(isinstance(p, _PROMPT_FORBIDDEN_PARTS) for p in parts):
         raise TypeError("system parts cannot contain model/tool protocol parts")
     return parts
-
-
-def _field_default(obj: object, field_name: str) -> Any:
-    """Return the declared default for a dataclass field.
-
-    Used to distinguish "populated" from "left at its default" in the
-    flat tagged-union dataclasses (StreamEvent, LiveClientEvent,
-    LiveServerEvent).  ``MISSING`` is returned via a unique sentinel so
-    fields without a default are treated as required and never count as
-    matching the default.
-    """
-    import dataclasses
-
-    fields = getattr(obj, "__dataclass_fields__", {})
-    f = fields.get(field_name)
-    if f is None:
-        return _MISSING
-    if f.default is not dataclasses.MISSING:
-        return f.default
-    if f.default_factory is not dataclasses.MISSING:  # type: ignore[misc]
-        return f.default_factory()  # type: ignore[misc]
-    return _MISSING
-
-
-_MISSING: Any = object()
-
-
-def _field_is_set(obj: object, field_name: str) -> bool:
-    """Return True if a tagged-union field has been populated past its default.
-
-    Defaults (``None``, ``()``, etc.) count as "unset"; any other value
-    counts as explicitly populated by the caller.
-    """
-    value = getattr(obj, field_name)
-    default = _field_default(obj, field_name)
-    if default is _MISSING:
-        return value is not None
-    if default == () and isinstance(value, (list, tuple)) and len(value) == 0:
-        return False
-    return value != default
-
-
-def _require_fields(owner: str, obj: object, fields: tuple[str, ...]) -> None:
-    """Validate that required tagged-union fields have been populated."""
-    for field_name in fields:
-        if not _field_is_set(obj, field_name):
-            raise ValueError(f"{owner} requires {field_name}")
-
-
-def _forbid_fields(owner: str, obj: object, allowed: tuple[str, ...]) -> None:
-    """Reject any tagged-union field outside ``allowed`` that has been set.
-
-    The set of candidate fields is derived from ``obj``'s dataclass fields
-    so that adding a new optional field to the variant automatically
-    extends the forbidden-field check on every other variant.
-    """
-    fields = getattr(obj, "__dataclass_fields__", None)
-    if not fields:
-        return
-    allowed_set = set(allowed) | {"type"}
-    for field_name in fields:
-        if field_name in allowed_set:
-            continue
-        if _field_is_set(obj, field_name):
-            raise ValueError(f"{owner} cannot include {field_name}")
 
 
 # ─── Deltas ──────────────────────────────────────────────────────────
@@ -1298,136 +1116,65 @@ class ErrorDetail:
         _validate_optional_text(self.provider_code, field_name="ErrorDetail.provider_code", allow_empty=False)
 
 
-_STREAM_EVENT_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
-    "start": ("id", "model"),
-    "delta": ("delta",),
-    "end": ("finish_reason", "usage", "provider_data"),
-    "error": ("error",),
-}
+@dataclass(frozen=True, slots=True)
+class StreamStartEvent:
+    """The response stream has started."""
 
-_STREAM_EVENT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "delta": ("delta",),
-    "error": ("error",),
-}
+    id: str | None = None
+    model: str | None = None
+    type: Literal["start"] = field(default="start", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_optional_text(self.id, field_name="StreamStartEvent.id", allow_empty=False)
+        _validate_optional_text(self.model, field_name="StreamStartEvent.model", allow_empty=False)
 
 
 @dataclass(frozen=True, slots=True)
-class StreamEvent:
-    """An event in the streaming protocol.
+class StreamDeltaEvent:
+    """A typed content delta arrived."""
 
-    Four event types:
-      start — the response begins, optionally carrying id/model
-      delta — a fragment of content arrives
-      end   — the response is complete, optionally carrying usage/finish_reason
-      error — something went wrong
-    """
-
-    type: StreamEventType
-
-    # start
-    id: str | None = None
-    model: str | None = None
-
-    # delta
-    delta: Delta | None = None
-
-    # end
-    finish_reason: FinishReason | None = None
-    usage: "Usage | None" = None
-
-    # error
-    error: ErrorDetail | None = None
-
-    # Provider-specific metadata (end events)
-    provider_data: ProviderData | None = None
+    delta: Delta
+    type: Literal["delta"] = field(default="delta", init=False)
 
     def __post_init__(self) -> None:
-        if self.type not in STREAM_EVENT_TYPES:
-            raise ValueError(f"unsupported stream event type: {self.type}")
-        owner = f"StreamEvent(type={self.type!r})"
-        _require_fields(owner, self, _STREAM_EVENT_REQUIRED_FIELDS.get(self.type, ()))
-        _forbid_fields(owner, self, _STREAM_EVENT_ALLOWED_FIELDS[self.type])
-        _validate_optional_text(self.id, field_name="StreamEvent.id", allow_empty=False)
-        _validate_optional_text(self.model, field_name="StreamEvent.model", allow_empty=False)
+        if not isinstance(self.delta, DELTA_CLASSES):
+            raise TypeError("StreamDeltaEvent.delta must be a Delta")
+
+
+@dataclass(frozen=True, slots=True)
+class StreamEndEvent:
+    """The response stream completed."""
+
+    finish_reason: FinishReason | None = None
+    usage: "Usage | None" = None
+    provider_data: ProviderData | None = None
+    type: Literal["end"] = field(default="end", init=False)
+
+    def __post_init__(self) -> None:
         if self.finish_reason is not None and self.finish_reason not in FINISH_REASONS:
             raise ValueError(f"unsupported finish reason: {self.finish_reason}")
-        if self.delta is not None and not isinstance(self.delta, DELTA_CLASSES):
-            raise TypeError("StreamEvent.delta must be a Delta")
         if self.usage is not None and not isinstance(self.usage, Usage):
-            raise TypeError("StreamEvent.usage must be a Usage")
-        if self.error is not None and not isinstance(self.error, ErrorDetail):
-            raise TypeError("StreamEvent.error must be an ErrorDetail")
-        _freeze_field(self, "provider_data")
+            raise TypeError("StreamEndEvent.usage must be a Usage")
+        _validate_json_field(self, "provider_data")
+
+
+@dataclass(frozen=True, slots=True)
+class StreamErrorEvent:
+    """The stream failed."""
+
+    error: ErrorDetail
+    type: Literal["error"] = field(default="error", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.error, ErrorDetail):
+            raise TypeError("StreamErrorEvent.error must be an ErrorDetail")
+
+
+StreamEvent: TypeAlias = StreamStartEvent | StreamDeltaEvent | StreamEndEvent | StreamErrorEvent
+STREAM_EVENT_CLASSES: tuple[type, ...] = get_args(StreamEvent)
 
 
 # ─── Tools ───────────────────────────────────────────────────────────
-
-_JSON_SCHEMA_TYPES: dict[Any, str] = {
-    int: "integer",
-    float: "number",
-    bool: "boolean",
-    str: "string",
-    list: "array",
-    tuple: "array",
-    set: "array",
-    dict: "object",
-}
-
-
-def _json_schema_for_annotation(annotation: Any) -> JsonObject:
-    """Best-effort JSON Schema for common Python annotations.
-
-    Unknown annotations intentionally become ``{}`` (unconstrained) rather
-    than pretending to be strings.
-    """
-    if annotation is Any:
-        return {}
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-
-    if origin is Annotated:
-        return _json_schema_for_annotation(args[0])
-
-    if origin in (Union, UnionType):
-        schemas = [_json_schema_for_annotation(arg) for arg in args]
-        if any(arg is NoneType for arg in args):
-            non_null = [s for arg, s in zip(args, schemas) if arg is not NoneType]
-            if len(non_null) == 1:
-                schema = dict(non_null[0])
-                typ = schema.get("type")
-                if isinstance(typ, str):
-                    schema["type"] = [typ, "null"]
-                return schema  # type: ignore[return-value]
-        return {"anyOf": schemas}
-
-    if origin is Literal:
-        values = list(args)
-        schema: JsonObject = {"enum": values}
-        value_types = {type(value) for value in values if value is not None}
-        if len(value_types) == 1:
-            schema_type = _JSON_SCHEMA_TYPES.get(next(iter(value_types)))
-            if schema_type is not None:
-                schema["type"] = schema_type
-        return schema
-
-    if origin in (list, tuple, set, Sequence):
-        schema: JsonObject = {"type": "array"}
-        if args:
-            schema["items"] = _json_schema_for_annotation(args[0])
-        return schema
-
-    if origin is dict:
-        schema = {"type": "object"}
-        if len(args) == 2 and args[1] is not Any:
-            schema["additionalProperties"] = _json_schema_for_annotation(args[1])
-        return schema
-
-    json_schema_type = _JSON_SCHEMA_TYPES.get(origin) or _JSON_SCHEMA_TYPES.get(annotation)
-    if json_schema_type is not None:
-        return {"type": json_schema_type}
-    return {}
-
 
 @dataclass(frozen=True, slots=True)
 class FunctionTool:
@@ -1443,34 +1190,7 @@ class FunctionTool:
     def __post_init__(self) -> None:
         _validate_text(self.name, field_name="FunctionTool.name", allow_empty=False)
         _validate_optional_text(self.description, field_name="FunctionTool.description")
-        _freeze_field(self, "parameters", required=True)
-
-    @staticmethod
-    def from_fn(fn: Callable[..., Any]) -> "FunctionTool":
-        """Infer a serializable tool spec from a callable's signature."""
-        sig = _inspect.signature(fn)
-        hints = _inspect.get_annotations(fn, eval_str=True)
-        properties: JsonObject = {}
-        required: list[str] = []
-        for name, param in sig.parameters.items():
-            if param.kind not in (
-                _inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                _inspect.Parameter.KEYWORD_ONLY,
-            ):
-                continue
-            ann = hints.get(name, str)
-            properties[name] = _json_schema_for_annotation(ann)
-            if param.default is _inspect.Parameter.empty:
-                required.append(name)
-        schema: JsonObject = {"type": "object", "properties": properties}
-        if required:
-            schema["required"] = required
-        return FunctionTool(
-            name=fn.__name__,
-            description=(_inspect.getdoc(fn) or "").strip() or None,
-            parameters=schema,
-        )
-
+        _validate_json_field(self, "parameters", required=True)
 
 @dataclass(frozen=True, slots=True)
 class BuiltinTool:
@@ -1482,7 +1202,7 @@ class BuiltinTool:
 
     def __post_init__(self) -> None:
         _validate_text(self.name, field_name="BuiltinTool.name", allow_empty=False)
-        _freeze_field(self, "config")
+        _validate_json_field(self, "config")
 
 
 Tool: TypeAlias = FunctionTool | BuiltinTool
@@ -1549,13 +1269,7 @@ class Reasoning:
 
 @dataclass(frozen=True, slots=True)
 class ToolChoice:
-    """How the model should use tools.
-
-    ``allowed`` is stored and exposed as tool names.  Passing Tool objects is
-    accepted as constructor sugar, but they are immediately normalized to
-    names; use ``ToolChoice.from_tools(...)`` when you want that conversion to
-    be explicit at the call site.
-    """
+    """How the model should use tools."""
 
     mode: ToolChoiceMode = "auto"
     allowed: tuple[str, ...] = ()
@@ -1564,22 +1278,7 @@ class ToolChoice:
     def __post_init__(self) -> None:
         if self.mode not in TOOL_CHOICE_MODES:
             raise ValueError(f"unsupported tool choice mode: {self.mode}")
-        raw_allowed = (
-            (self.allowed,)
-            if isinstance(self.allowed, (str, FunctionTool, BuiltinTool))
-            else tuple(self.allowed)
-        )
-        if any(isinstance(item, (FunctionTool, BuiltinTool)) for item in raw_allowed):
-            _warnings.warn(
-                "Passing Tool objects to ToolChoice.allowed is deprecated; "
-                "pass tool names or use ToolChoice.from_tools() instead",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        allowed = tuple(
-            item.name if isinstance(item, (FunctionTool, BuiltinTool)) else item
-            for item in raw_allowed
-        )
+        allowed = (self.allowed,) if isinstance(self.allowed, str) else tuple(self.allowed)
         object.__setattr__(self, "allowed", allowed)
         if any(not isinstance(name, str) or not name for name in self.allowed):
             raise ValueError("ToolChoice.allowed must contain non-empty tool names")
@@ -1645,8 +1344,8 @@ class Config:
             raise TypeError("tool_choice must be a ToolChoice")
         if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
             raise TypeError("reasoning must be a Reasoning")
-        _freeze_field(self, "response_format")
-        _freeze_extensions_field(self)
+        _validate_json_field(self, "response_format")
+        _validate_extensions_field(self)
 
 
 # ─── Request ─────────────────────────────────────────────────────────
@@ -1669,21 +1368,12 @@ class Request(_ModelRequest):
 
     The composed artifact sent to the model — conversation history,
     system instructions, available tools, and generation config.
-
-    cache — enable prompt caching (default ``True``).  When enabled,
-    the adapter places cache breakpoints on the system prompt and
-    conversation history so that stable prefixes are reused across
-    requests.  On Anthropic this translates to ``cache_control``
-    annotations; on OpenAI and Gemini caching is automatic.
-    Set to ``False`` only for known one-shot requests where the
-    25% Anthropic write surcharge matters.
     """
 
     messages: tuple[Message, ...]
     system: str | tuple[PromptPart, ...] | None = None
     tools: tuple[Tool, ...] = ()
     config: Config = field(default_factory=Config)
-    cache: bool = True
 
     def __post_init__(self) -> None:
         _ModelRequest.__post_init__(self)
@@ -1701,7 +1391,6 @@ class Request(_ModelRequest):
             raise ValueError("Request.tools cannot contain duplicate tool names")
         if not isinstance(self.config, Config):
             raise TypeError("Request.config must be a Config")
-        _validate_bool(self.cache, field_name="Request.cache")
         if self.config.tool_choice is not None and self.config.tool_choice.allowed:
             missing = set(self.config.tool_choice.allowed) - set(tool_names)
             if missing:
@@ -1778,7 +1467,6 @@ class Response:
     finish_reason: FinishReason
     usage: Usage
     provider_data: ProviderData | None = None
-    _parsed_json: Any = field(default=_MISSING, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         _validate_optional_text(self.id, field_name="Response.id", allow_empty=False)
@@ -1791,7 +1479,7 @@ class Response:
             raise ValueError(f"unsupported finish reason: {self.finish_reason}")
         if not isinstance(self.usage, Usage):
             raise TypeError("Response.usage must be a Usage")
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
     @property
     def text(self) -> str | None:
@@ -1802,32 +1490,18 @@ class Response:
         return self.message.parts_of(ToolCallPart)
 
     def parse_json(self, *, default: Any = _MISSING) -> Any:
-        """Parse text content as JSON.
-
-        Raises ``ValueError`` by default.  Pass ``default=...`` to receive a
-        fallback instead of an exception.  Successful parses are cached.
-        """
-        if self._parsed_json is not _MISSING:
-            return self._parsed_json
-
+        """Parse the response text as exact JSON."""
         t = self.text
         if t is None:
             if default is not _MISSING:
                 return default
             raise ValueError(
-                "Cannot parse response as JSON: no text content. "
+                "Cannot parse response as JSON: response is not pure text. "
                 f"Parts: {[p.type for p in self.message.parts]}"
             )
         stripped = t.strip()
-        match = _re.search(
-            r"```[ \t]*(?:json)?[ \t\r\n]+(.*?)\s*```",
-            stripped,
-            _re.DOTALL | _re.IGNORECASE,
-        )
-        if match:
-            stripped = match.group(1).strip()
         try:
-            parsed = _json.loads(stripped)
+            return _json.loads(stripped)
         except _json.JSONDecodeError as e:
             if default is not _MISSING:
                 return default
@@ -1835,13 +1509,10 @@ class Response:
             raise ValueError(
                 f"Cannot parse response as JSON: {e}\nRaw text: {preview}"
             ) from e
-        frozen = _freeze_json_value(parsed) if isinstance(parsed, (dict, list)) else parsed
-        object.__setattr__(self, "_parsed_json", frozen)
-        return frozen
 
     @property
     def json(self) -> Any:
-        """Best-effort parsed JSON, or ``None`` when parsing is impossible.
+        """Parsed exact JSON text, or ``None`` when parsing fails.
 
         Valid JSON ``null`` also returns ``None``; use ``parse_json()`` when
         parse failures should be reported distinctly.
@@ -1865,7 +1536,7 @@ class EmbeddingRequest(_ModelRequest):
             raise ValueError("inputs cannot be empty")
         if any(not isinstance(x, str) or x == "" for x in self.inputs):
             raise ValueError("inputs must contain non-empty strings")
-        _freeze_extensions_field(self)
+        _validate_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1898,7 +1569,7 @@ class EmbeddingResponse:
                         "EmbeddingResponse vector elements must be finite"
                     )
         object.__setattr__(self, "vectors", vectors)
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
 
 # ─── File Upload ─────────────────────────────────────────────────────
@@ -1931,7 +1602,7 @@ class FileUploadRequest:
         if isinstance(self.bytes_data, bytearray):
             object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
         _validate_text(self.media_type, field_name="FileUploadRequest.media_type", allow_empty=False)
-        _freeze_extensions_field(self)
+        _validate_extensions_field(self)
 
     def __repr__(self) -> str:
         return (
@@ -1951,7 +1622,7 @@ class FileUploadResponse:
 
     def __post_init__(self) -> None:
         _validate_text(self.id, field_name="FileUploadResponse.id", allow_empty=False)
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
 
 # ─── Batch ───────────────────────────────────────────────────────────
@@ -1979,7 +1650,7 @@ class BatchRequest:
         _validate_optional_text(self.model, field_name="BatchRequest.model", allow_empty=False)
         if self.model is None:
             object.__setattr__(self, "model", self.requests[0].model)
-        _freeze_extensions_field(self)
+        _validate_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1992,7 +1663,7 @@ class BatchResponse:
         _validate_text(self.id, field_name="BatchResponse.id", allow_empty=False)
         if self.status not in BATCH_STATUSES:
             raise ValueError(f"unsupported batch status: {self.status}")
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2020,7 +1691,7 @@ class ImageGenerationRequest(_PromptRequest):
     def __post_init__(self) -> None:
         _PromptRequest.__post_init__(self)
         _validate_optional_text(self.size, field_name="size", allow_empty=False)
-        _freeze_extensions_field(self)
+        _validate_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2041,7 +1712,7 @@ class ImageGenerationResponse:
             raise ValueError("ImageGenerationResponse requires at least one image")
         if not all(isinstance(img, ImagePart) for img in self.images):
             raise TypeError("images must contain ImagePart objects")
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
 
 # ─── Audio Generation ────────────────────────────────────────────────
@@ -2057,7 +1728,7 @@ class AudioGenerationRequest(_PromptRequest):
         _PromptRequest.__post_init__(self)
         _validate_optional_text(self.voice, field_name="voice", allow_empty=False)
         _validate_optional_text(self.format, field_name="format", allow_empty=False)
-        _freeze_extensions_field(self)
+        _validate_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2075,7 +1746,7 @@ class AudioGenerationResponse:
             raise TypeError("AudioGenerationResponse.usage must be a Usage")
         if not isinstance(self.audio, AudioPart):
             raise TypeError("audio must be an AudioPart")
-        _freeze_field(self, "provider_data")
+        _validate_json_field(self, "provider_data")
 
 
 EndpointRequest: TypeAlias = (
@@ -2139,108 +1810,156 @@ class LiveConfig(_ModelRequest):
         if self.output_format is not None and not isinstance(self.output_format, AudioFormat):
             raise TypeError("output_format must be an AudioFormat")
         _validate_optional_text(self.voice, field_name="LiveConfig.voice", allow_empty=False)
-        _freeze_extensions_field(self)
-
-
-_LIVE_CLIENT_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
-    "audio": ("data",),
-    "video": ("data",),
-    "text": ("text",),
-    "tool_result": ("id", "content"),
-    "interrupt": (),
-    "end_audio": (),
-}
-
-_LIVE_CLIENT_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "audio": ("data",),
-    "video": ("data",),
-    "text": ("text",),
-    "tool_result": ("id", "content"),
-}
-
-_LIVE_SERVER_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
-    "audio": ("data",),
-    "text": ("text",),
-    "tool_call": ("id", "name", "input"),
-    "tool_call_delta": ("id", "name", "input_delta"),
-    "interrupted": (),
-    "turn_end": ("usage",),
-    "error": ("error",),
-}
-
-_LIVE_SERVER_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
-    "audio": ("data",),
-    "text": ("text",),
-    "tool_call": ("id", "name", "input"),
-    # id/name are optional on deltas because some realtime transports send
-    # them only on the first fragment of a tool call; adapters maintain that
-    # association while clients can still consume empty input_delta chunks.
-    "tool_call_delta": ("input_delta",),
-    "turn_end": ("usage",),
-    "error": ("error",),
-}
+        _validate_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
-class LiveClientEvent:
-    type: LiveClientEventType
-    data: str | None = None
-    text: str | None = None
-    id: str | None = None
-    content: tuple[ToolResultContentPart, ...] = ()
+class LiveClientAudioEvent:
+    data: str
+    type: Literal["audio"] = field(default="audio", init=False)
 
     def __post_init__(self) -> None:
-        if self.type not in LIVE_CLIENT_EVENT_TYPES:
-            raise ValueError(f"unsupported live client event type: {self.type}")
-        object.__setattr__(self, "content", tuple(self.content))
-        owner = f"LiveClientEvent(type={self.type!r})"
-        _require_fields(owner, self, _LIVE_CLIENT_REQUIRED_FIELDS.get(self.type, ()))
-        _forbid_fields(owner, self, _LIVE_CLIENT_ALLOWED_FIELDS[self.type])
-        _validate_optional_text(self.data, field_name="LiveClientEvent.data")
-        _validate_optional_text(self.text, field_name="LiveClientEvent.text")
-        _validate_optional_text(self.id, field_name="LiveClientEvent.id", allow_empty=False)
-        if self.type in {"audio", "video"}:
-            _validate_base64_data("LiveClientEvent", self.data)
-        if self.type == "tool_result":
-            if not all(_is_part(p) for p in self.content):
-                raise TypeError("LiveClientEvent.content must contain Part objects")
-            if any(isinstance(p, _TOOL_RESULT_FORBIDDEN_PARTS) for p in self.content):
-                raise TypeError(
-                    "LiveClientEvent.content cannot contain model or protocol parts"
-                )
+        _validate_text(self.data, field_name="LiveClientAudioEvent.data", allow_empty=False)
+        _validate_base64_data("LiveClientAudioEvent", self.data)
 
 
 @dataclass(frozen=True, slots=True)
-class LiveServerEvent:
-    type: LiveServerEventType
-    data: str | None = None
-    text: str | None = None
+class LiveClientVideoEvent:
+    data: str
+    type: Literal["video"] = field(default="video", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.data, field_name="LiveClientVideoEvent.data", allow_empty=False)
+        _validate_base64_data("LiveClientVideoEvent", self.data)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveClientTextEvent:
+    text: str
+    type: Literal["text"] = field(default="text", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.text, field_name="LiveClientTextEvent.text")
+
+
+@dataclass(frozen=True, slots=True)
+class LiveClientToolResultEvent:
+    id: str
+    content: tuple[ToolResultContentPart, ...]
+    type: Literal["tool_result"] = field(default="tool_result", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.id, field_name="LiveClientToolResultEvent.id", allow_empty=False)
+        object.__setattr__(self, "content", tuple(self.content))
+        if not self.content:
+            raise ValueError("LiveClientToolResultEvent requires content")
+        if not all(_is_part(p) for p in self.content):
+            raise TypeError("LiveClientToolResultEvent.content must contain Part objects")
+        if any(isinstance(p, _TOOL_RESULT_FORBIDDEN_PARTS) for p in self.content):
+            raise TypeError("LiveClientToolResultEvent.content cannot contain model or protocol parts")
+
+
+@dataclass(frozen=True, slots=True)
+class LiveClientInterruptEvent:
+    type: Literal["interrupt"] = field(default="interrupt", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveClientEndAudioEvent:
+    type: Literal["end_audio"] = field(default="end_audio", init=False)
+
+
+LiveClientEvent: TypeAlias = (
+    LiveClientAudioEvent
+    | LiveClientVideoEvent
+    | LiveClientTextEvent
+    | LiveClientToolResultEvent
+    | LiveClientInterruptEvent
+    | LiveClientEndAudioEvent
+)
+LIVE_CLIENT_EVENT_CLASSES: tuple[type, ...] = get_args(LiveClientEvent)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerAudioEvent:
+    data: str
+    type: Literal["audio"] = field(default="audio", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.data, field_name="LiveServerAudioEvent.data", allow_empty=False)
+        _validate_base64_data("LiveServerAudioEvent", self.data)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerTextEvent:
+    text: str
+    type: Literal["text"] = field(default="text", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.text, field_name="LiveServerTextEvent.text")
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerToolCallEvent:
+    id: str
+    name: str
+    input: JsonObject
+    type: Literal["tool_call"] = field(default="tool_call", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.id, field_name="LiveServerToolCallEvent.id", allow_empty=False)
+        _validate_text(self.name, field_name="LiveServerToolCallEvent.name", allow_empty=False)
+        _validate_json_field(self, "input", required=True)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerToolCallDeltaEvent:
+    input_delta: str
     id: str | None = None
     name: str | None = None
-    input: JsonObject | None = None
-    input_delta: str | None = None
-    usage: Usage | None = None
-    error: ErrorDetail | None = None
+    type: Literal["tool_call_delta"] = field(default="tool_call_delta", init=False)
 
     def __post_init__(self) -> None:
-        if self.type not in LIVE_SERVER_EVENT_TYPES:
-            raise ValueError(f"unsupported live server event type: {self.type}")
-        owner = f"LiveServerEvent(type={self.type!r})"
-        _require_fields(owner, self, _LIVE_SERVER_REQUIRED_FIELDS.get(self.type, ()))
-        _forbid_fields(owner, self, _LIVE_SERVER_ALLOWED_FIELDS[self.type])
-        _validate_optional_text(self.data, field_name="LiveServerEvent.data")
-        _validate_optional_text(self.text, field_name="LiveServerEvent.text")
-        _validate_optional_text(self.id, field_name="LiveServerEvent.id", allow_empty=False)
-        _validate_optional_text(self.name, field_name="LiveServerEvent.name", allow_empty=False)
-        _validate_optional_text(self.input_delta, field_name="LiveServerEvent.input_delta")
-        if self.type == "audio":
-            _validate_base64_data("LiveServerEvent", self.data)
-        if self.usage is not None and not isinstance(self.usage, Usage):
-            raise TypeError("LiveServerEvent.usage must be a Usage")
-        if self.error is not None and not isinstance(self.error, ErrorDetail):
-            raise TypeError("LiveServerEvent.error must be an ErrorDetail")
-        if self.type == "tool_call":
-            _freeze_field(self, "input", required=True)
+        _validate_text(self.input_delta, field_name="LiveServerToolCallDeltaEvent.input_delta")
+        _validate_optional_text(self.id, field_name="LiveServerToolCallDeltaEvent.id", allow_empty=False)
+        _validate_optional_text(self.name, field_name="LiveServerToolCallDeltaEvent.name", allow_empty=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerInterruptedEvent:
+    type: Literal["interrupted"] = field(default="interrupted", init=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerTurnEndEvent:
+    usage: Usage
+    type: Literal["turn_end"] = field(default="turn_end", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.usage, Usage):
+            raise TypeError("LiveServerTurnEndEvent.usage must be a Usage")
+
+
+@dataclass(frozen=True, slots=True)
+class LiveServerErrorEvent:
+    error: ErrorDetail
+    type: Literal["error"] = field(default="error", init=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.error, ErrorDetail):
+            raise TypeError("LiveServerErrorEvent.error must be an ErrorDetail")
+
+
+LiveServerEvent: TypeAlias = (
+    LiveServerAudioEvent
+    | LiveServerTextEvent
+    | LiveServerToolCallEvent
+    | LiveServerToolCallDeltaEvent
+    | LiveServerInterruptedEvent
+    | LiveServerTurnEndEvent
+    | LiveServerErrorEvent
+)
+LIVE_SERVER_EVENT_CLASSES: tuple[type, ...] = get_args(LiveServerEvent)
 
 
 # ─── ToolCallInfo (for callbacks) ────────────────────────────────────
@@ -2251,12 +1970,7 @@ class LiveServerEvent:
 
 @dataclass(frozen=True, slots=True)
 class ToolCallInfo:
-    """Backward-compatible callback view of a tool call.
-
-    ``ToolCallPart`` is the canonical tool-call value object.  This wrapper
-    exists for callback APIs that historically omitted the part discriminator;
-    convert explicitly with ``from_part()``/``to_part()`` to avoid shape drift.
-    """
+    """Callback view of a tool call without the part discriminator."""
 
     id: str
     name: str
@@ -2265,7 +1979,7 @@ class ToolCallInfo:
     def __post_init__(self) -> None:
         _validate_text(self.id, field_name="ToolCallInfo.id", allow_empty=False)
         _validate_text(self.name, field_name="ToolCallInfo.name", allow_empty=False)
-        _freeze_field(self, "input", required=True)
+        _validate_json_field(self, "input", required=True)
 
     @classmethod
     def from_part(cls, part: ToolCallPart) -> "ToolCallInfo":
@@ -2284,13 +1998,13 @@ def _check_literal_vocabularies() -> None:
         ("ErrorCode", set(get_args(ErrorCode)), set(ERROR_CODES)),
         ("FinishReason", set(get_args(FinishReason)), set(FINISH_REASONS)),
         ("Role", set(get_args(Role)), set(ROLE_VALUES)),
-        ("StreamEventType", set(get_args(StreamEventType)), set(STREAM_EVENT_TYPES)),
+        ("StreamEventType", set(get_args(StreamEventType)), {_variant_type(cls) for cls in STREAM_EVENT_CLASSES}),
         ("BatchStatus", set(get_args(BatchStatus)), set(BATCH_STATUSES)),
         ("AudioEncoding", set(get_args(AudioEncoding)), set(AUDIO_ENCODINGS)),
         ("ToolChoiceMode", set(get_args(ToolChoiceMode)), set(TOOL_CHOICE_MODES)),
         ("ReasoningEffort", set(get_args(ReasoningEffort)), set(REASONING_EFFORTS)),
-        ("LiveClientEventType", set(get_args(LiveClientEventType)), set(LIVE_CLIENT_EVENT_TYPES)),
-        ("LiveServerEventType", set(get_args(LiveServerEventType)), set(LIVE_SERVER_EVENT_TYPES)),
+        ("LiveClientEventType", set(get_args(LiveClientEventType)), {_variant_type(cls) for cls in LIVE_CLIENT_EVENT_CLASSES}),
+        ("LiveServerEventType", set(get_args(LiveServerEventType)), {_variant_type(cls) for cls in LIVE_SERVER_EVENT_CLASSES}),
     )
     for name, literal_values, runtime_values in checks:
         if literal_values != runtime_values:

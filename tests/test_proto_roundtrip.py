@@ -34,16 +34,32 @@ from lm15.types import (
     ImageGenerationRequest,
     ImageGenerationResponse,
     ImagePart,
+    LiveClientAudioEvent,
+    LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientInterruptEvent,
+    LiveClientTextEvent,
+    LiveClientToolResultEvent,
+    LiveClientVideoEvent,
     LiveConfig,
+    LiveServerAudioEvent,
+    LiveServerErrorEvent,
     LiveServerEvent,
+    LiveServerInterruptedEvent,
+    LiveServerTextEvent,
+    LiveServerToolCallEvent,
+    LiveServerTurnEndEvent,
     Message,
     Part,
     Reasoning,
     RefusalPart,
     Request,
     Response,
+    StreamDeltaEvent,
+    StreamEndEvent,
+    StreamErrorEvent,
     StreamEvent,
+    StreamStartEvent,
     TextDelta,
     TextPart,
     ThinkingDelta,
@@ -509,7 +525,6 @@ def _request_to_proto(pb, request: Request):
         out.system.CopyFrom(system)
     out.tools.extend(_tool_to_proto(pb, t) for t in request.tools)
     out.config.CopyFrom(_config_to_proto(pb, request.config))
-    _set_wrapper(out.cache, request.cache)
     return out
 
 
@@ -788,23 +803,21 @@ def _delta_from_proto(pb, msg):
 def _stream_event_from_proto(pb, msg):
     kind = msg.WhichOneof("event")
     if kind == "start":
-        return StreamEvent(
-            type="start",
+        return StreamStartEvent(
             id=_wrapper_value(msg.start, "id"),
             model=_wrapper_value(msg.start, "model"),
         )
     if kind == "delta":
-        return StreamEvent(type="delta", delta=_delta_from_proto(pb, msg.delta.delta))
+        return StreamDeltaEvent(delta=_delta_from_proto(pb, msg.delta.delta))
     if kind == "end":
         finish_reason = _maps(pb)["finish"][1].get(msg.end.finish_reason)
-        return StreamEvent(
-            type="end",
+        return StreamEndEvent(
             finish_reason=finish_reason,
             usage=_usage_from_proto(pb, msg.end.usage) if msg.end.HasField("usage") else None,
             provider_data=_struct_value(msg.end, "provider_data"),
         )
     if kind == "error":
-        return StreamEvent(type="error", error=_error_from_proto(pb, msg.error.error))
+        return StreamErrorEvent(error=_error_from_proto(pb, msg.error.error))
     raise ValueError("event kind missing")
 
 
@@ -815,7 +828,6 @@ def _request_from_proto(pb, msg):
         system=_system_from_proto(pb, msg.system) if msg.HasField("system") else None,
         tools=tuple(_tool_from_proto(pb, t) for t in msg.tools),
         config=_config_from_proto(pb, msg.config) if msg.HasField("config") else Config(),
-        cache=_wrapper_value(msg, "cache") if msg.HasField("cache") else True,
     )
 
 
@@ -857,43 +869,41 @@ def _live_config_from_proto(pb, msg):
 def _live_client_event_from_proto(pb, msg):
     kind = msg.WhichOneof("event")
     if kind == "audio":
-        return LiveClientEvent(type="audio", data=_b64(msg.audio.data))
+        return LiveClientAudioEvent(data=_b64(msg.audio.data))
     if kind == "video":
-        return LiveClientEvent(type="video", data=_b64(msg.video.data))
+        return LiveClientVideoEvent(data=_b64(msg.video.data))
     if kind == "text":
-        return LiveClientEvent(type="text", text=msg.text.text)
+        return LiveClientTextEvent(text=msg.text.text)
     if kind == "tool_result":
-        return LiveClientEvent(
-            type="tool_result",
+        return LiveClientToolResultEvent(
             id=msg.tool_result.id,
             content=tuple(_part_from_proto(pb, p) for p in msg.tool_result.content),
         )
     if kind == "interrupt":
-        return LiveClientEvent(type="interrupt")
+        return LiveClientInterruptEvent()
     if kind == "end_audio":
-        return LiveClientEvent(type="end_audio")
+        return LiveClientEndAudioEvent()
     raise ValueError("live client event missing")
 
 
 def _live_server_event_from_proto(pb, msg):
     kind = msg.WhichOneof("event")
     if kind == "audio":
-        return LiveServerEvent(type="audio", data=_b64(msg.audio.data))
+        return LiveServerAudioEvent(data=_b64(msg.audio.data))
     if kind == "text":
-        return LiveServerEvent(type="text", text=msg.text.text)
+        return LiveServerTextEvent(text=msg.text.text)
     if kind == "tool_call":
-        return LiveServerEvent(
-            type="tool_call",
+        return LiveServerToolCallEvent(
             id=msg.tool_call.id,
             name=msg.tool_call.name,
             input=_struct_value(msg.tool_call, "input") or {},
         )
     if kind == "interrupted":
-        return LiveServerEvent(type="interrupted")
+        return LiveServerInterruptedEvent()
     if kind == "turn_end":
-        return LiveServerEvent(type="turn_end", usage=_usage_from_proto(pb, msg.turn_end.usage))
+        return LiveServerTurnEndEvent(usage=_usage_from_proto(pb, msg.turn_end.usage))
     if kind == "error":
-        return LiveServerEvent(type="error", error=_error_from_proto(pb, msg.error.error))
+        return LiveServerErrorEvent(error=_error_from_proto(pb, msg.error.error))
     raise ValueError("live server event missing")
 
 
@@ -962,16 +972,15 @@ def test_delta_and_stream_event_roundtrips_cover_every_variant(pb) -> None:
         _assert_py_proto_py(delta, _delta_to_proto, _delta_from_proto, pb)
 
     events = [
-        StreamEvent(type="start"),
-        StreamEvent(type="start", id="r1", model="m"),
-        StreamEvent(type="delta", delta=TextDelta("hi")),
-        StreamEvent(
-            type="end",
+        StreamStartEvent(),
+        StreamStartEvent(id="r1", model="m"),
+        StreamDeltaEvent(delta=TextDelta("hi")),
+        StreamEndEvent(
             finish_reason="stop",
             usage=Usage(input_tokens=1, output_tokens=2, total_tokens=3),
             provider_data={"provider": "ok"},
         ),
-        StreamEvent(type="error", error=ErrorDetail(code="timeout", message="slow")),
+        StreamErrorEvent(error=ErrorDetail(code="timeout", message="slow")),
     ]
     for event in events:
         _assert_py_proto_py(event, _stream_event_to_proto, _stream_event_from_proto, pb)
@@ -1013,7 +1022,6 @@ def test_request_and_response_roundtrip(pb) -> None:
             reasoning=Reasoning(effort="high", thinking_budget=32, total_budget=64),
             extensions={"openai": {"store": False}},
         ),
-        cache=False,
     )
     _assert_py_proto_py(request, _request_to_proto, _request_from_proto, pb)
     assert lm15_proto.from_proto_bytes(
@@ -1147,26 +1155,25 @@ def test_live_config_and_events_roundtrip(pb) -> None:
     _assert_py_proto_py(config, _live_config_to_proto, _live_config_from_proto, pb)
 
     client_events = [
-        LiveClientEvent(type="audio", data=_b64(b"audio")),
-        LiveClientEvent(type="video", data=_b64(b"video")),
-        LiveClientEvent(type="text", text="hello"),
-        LiveClientEvent(type="tool_result", id="call_1", content=(TextPart("ok"),)),
-        LiveClientEvent(type="interrupt"),
-        LiveClientEvent(type="end_audio"),
+        LiveClientAudioEvent(data=_b64(b"audio")),
+        LiveClientVideoEvent(data=_b64(b"video")),
+        LiveClientTextEvent(text="hello"),
+        LiveClientToolResultEvent(id="call_1", content=(TextPart("ok"),)),
+        LiveClientInterruptEvent(),
+        LiveClientEndAudioEvent(),
     ]
     for event in client_events:
         _assert_py_proto_py(event, _live_client_event_to_proto, _live_client_event_from_proto, pb)
 
     server_events = [
-        LiveServerEvent(type="audio", data=_b64(b"audio")),
-        LiveServerEvent(type="text", text="hello"),
-        LiveServerEvent(type="tool_call", id="call_1", name="lookup", input={"q": "x"}),
-        LiveServerEvent(type="interrupted"),
-        LiveServerEvent(
-            type="turn_end",
+        LiveServerAudioEvent(data=_b64(b"audio")),
+        LiveServerTextEvent(text="hello"),
+        LiveServerToolCallEvent(id="call_1", name="lookup", input={"q": "x"}),
+        LiveServerInterruptedEvent(),
+        LiveServerTurnEndEvent(
             usage=Usage(input_tokens=4, output_tokens=5, total_tokens=9),
         ),
-        LiveServerEvent(type="error", error=ErrorDetail(code="provider", message="bad")),
+        LiveServerErrorEvent(error=ErrorDetail(code="provider", message="bad")),
     ]
     for event in server_events:
         _assert_py_proto_py(event, _live_server_event_to_proto, _live_server_event_from_proto, pb)

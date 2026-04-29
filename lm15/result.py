@@ -46,7 +46,10 @@ from .types import (
     Part,
     Request,
     Response,
+    StreamDeltaEvent,
+    StreamEndEvent,
     StreamEvent,
+    StreamStartEvent,
     TextDelta,
     TextPart,
     ThinkingDelta,
@@ -470,7 +473,6 @@ class Result:
                             system=current_request.system,
                             tools=current_request.tools,
                             config=current_request.config,
-                            cache=current_request.cache,
                         )
                         rounds += 1
                         continue
@@ -607,38 +609,30 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
     response contains a valid Part that has no Delta representation, this
     function raises instead of silently dropping content.
     """
-    yield StreamEvent(type="start", id=response.id, model=response.model)
+    yield StreamStartEvent(id=response.id, model=response.model)
     for idx, part in enumerate(response.message.parts):
         if isinstance(part, TextPart):
-            yield StreamEvent(
-                type="delta",
-                delta=TextDelta(text=part.text, part_index=idx),
-            )
+            yield StreamDeltaEvent(delta=TextDelta(text=part.text, part_index=idx))
         elif isinstance(part, ThinkingPart):
-            yield StreamEvent(
-                type="delta",
-                delta=ThinkingDelta(text=part.text, part_index=idx),
-            )
+            yield StreamDeltaEvent(delta=ThinkingDelta(text=part.text, part_index=idx))
         elif isinstance(part, ToolCallPart):
-            yield StreamEvent(
-                type="delta",
+            yield StreamDeltaEvent(
                 delta=ToolCallDelta(
                     input=json.dumps(part.input),
                     part_index=idx,
                     id=part.id,
                     name=part.name,
-                ),
+                )
             )
         elif isinstance(part, ImagePart):
-            yield StreamEvent(
-                type="delta",
+            yield StreamDeltaEvent(
                 delta=ImageDelta(
                     part_index=idx,
                     data=part.data,
                     url=part.url,
                     file_id=part.file_id,
                     media_type=part.media_type,
-                ),
+                )
             )
         elif isinstance(part, AudioPart):
             if part.data is None:
@@ -646,28 +640,25 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
                     part,
                     reason="AudioDelta only supports inline data",
                 )
-            yield StreamEvent(
-                type="delta",
+            yield StreamDeltaEvent(
                 delta=AudioDelta(
                     data=part.data,
                     part_index=idx,
                     media_type=part.media_type,
-                ),
+                )
             )
         elif isinstance(part, CitationPart):
-            yield StreamEvent(
-                type="delta",
+            yield StreamDeltaEvent(
                 delta=CitationDelta(
                     text=part.text,
                     url=part.url,
                     title=part.title,
                     part_index=idx,
-                ),
+                )
             )
         else:
             _raise_non_streamable_part(part)
-    yield StreamEvent(
-        type="end",
+    yield StreamEndEvent(
         finish_reason=response.finish_reason,
         usage=response.usage,
         provider_data=response.provider_data,
