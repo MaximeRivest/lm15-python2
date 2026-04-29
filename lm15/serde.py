@@ -291,6 +291,7 @@ def reasoning_to_dict(r: Reasoning) -> dict[str, Any]:
         "effort": r.effort,
         "thinking_budget": r.thinking_budget,
         "total_budget": r.total_budget,
+        "summary": r.summary,
     })
 
 
@@ -305,6 +306,7 @@ def reasoning_from_dict(d: dict[str, Any]) -> Reasoning:
         effort=effort,
         thinking_budget=d.get("thinking_budget", d.get("budget")),
         total_budget=d.get("total_budget"),
+        summary=d.get("summary"),
     )
 
 

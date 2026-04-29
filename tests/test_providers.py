@@ -13,12 +13,15 @@ from lm15.types import (
     Config,
     FunctionTool,
     Message,
+    Reasoning,
     Request,
     StreamDeltaEvent,
     StreamEndEvent,
     StreamStartEvent,
     TextDelta,
     TextPart,
+    ThinkingDelta,
+    ThinkingPart,
     ToolCallPart,
 )
 
@@ -96,6 +99,84 @@ def test_openai_builds_responses_request_with_new_types() -> None:
     assert payload["store"] is False
 
 
+def test_openai_reasoning_summary_is_requested_when_configured() -> None:
+    lm = OpenAILM(api_key="sk-test", transport=_FakeTransport())
+    request = Request(
+        model="gpt-test",
+        messages=(Message.user("What is 143 times 27?"),),
+        config=Config(reasoning=Reasoning(effort="high", summary="auto")),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+
+
+def test_response_format_json_schema_maps_to_provider_payloads() -> None:
+    recipe_schema = {
+        "type": "json_schema",
+        "name": "recipe",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "ingredients": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["name", "ingredients"],
+            "additionalProperties": False,
+        },
+    }
+    request = Request(
+        model="model-test",
+        messages=(Message.user("Give me a cookie recipe."),),
+        config=Config(response_format=recipe_schema),
+    )
+
+    openai = OpenAILM(api_key="sk-test", transport=_FakeTransport())
+    openai_payload = json.loads(openai.build_request(request, stream=False).body)
+    assert openai_payload["text"] == {"format": recipe_schema}
+    assert "type" not in openai_payload
+
+    anthropic = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    anthropic_payload = json.loads(anthropic.build_request(request, stream=False).body)
+    assert anthropic_payload["output_config"] == {
+        "format": {"type": "json_schema", "schema": recipe_schema["schema"]}
+    }
+    assert "response_format" not in anthropic_payload
+
+    gemini = GeminiLM(api_key="sk-gem", transport=_FakeTransport())
+    gemini_payload = json.loads(gemini.build_request(request, stream=False).body)
+    assert gemini_payload["generationConfig"] == {
+        "responseMimeType": "application/json",
+        "responseJsonSchema": recipe_schema["schema"],
+    }
+    assert "responseSchema" not in gemini_payload["generationConfig"]
+    assert "type" not in gemini_payload["generationConfig"]
+    assert "schema" not in gemini_payload["generationConfig"]
+
+
+def test_gemini_response_format_uses_response_schema_for_openapi_subset() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"name": {"type": "string"}},
+        "required": ["name"],
+    }
+    request = Request(
+        model="gemini-test",
+        messages=(Message.user("Return JSON."),),
+        config=Config(response_format={"type": "json_schema", "schema": schema}),
+    )
+
+    lm = GeminiLM(api_key="sk-gem", transport=_FakeTransport())
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["generationConfig"] == {
+        "responseMimeType": "application/json",
+        "responseSchema": schema,
+    }
+
+
 def test_openai_builds_assistant_history_with_output_text_parts() -> None:
     lm = OpenAILM(api_key="sk-test", transport=_FakeTransport(), base_url="https://example.test/v1")
     request = Request(
@@ -113,6 +194,37 @@ def test_openai_builds_assistant_history_with_output_text_parts() -> None:
         "role": "assistant",
         "content": [{"type": "output_text", "text": "four"}],
     }
+
+
+def test_openai_complete_parses_reasoning_summary() -> None:
+    body = json.dumps(
+        {
+            "id": "resp_1",
+            "model": "gpt-test",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        {"type": "summary_text", "text": "Multiplied 143 by 20 and 7, then added."}
+                    ],
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "3861"}],
+                },
+            ],
+            "usage": {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+        }
+    ).encode()
+    transport = _FakeTransport([_FakeResponse(200, body)])
+    lm = OpenAILM(api_key="sk-test", transport=transport)
+
+    response = lm.complete(Request(model="gpt-test", messages=(Message.user("Hi"),)))
+
+    assert response.message.parts_of(ThinkingPart) == [
+        ThinkingPart("Multiplied 143 by 20 and 7, then added.")
+    ]
+    assert response.message.parts_of(TextPart) == [TextPart("3861")]
 
 
 def test_openai_complete_parses_tool_call_response() -> None:
@@ -208,6 +320,27 @@ def test_openai_complete_parses_web_search_citations() -> None:
     assert response.finish_reason == "stop"
 
 
+def test_openai_stream_parses_reasoning_summary_delta() -> None:
+    lm = OpenAILM(api_key="sk-test", transport=_FakeTransport())
+    request = Request(model="gpt-test", messages=(Message.user("Hi"),))
+    raw = type("Raw", (), {})()
+    raw.data = json.dumps(
+        {
+            "type": "response.reasoning_summary_text.delta",
+            "output_index": 0,
+            "delta": "Multiplied partial products.",
+        }
+    )
+
+    parsed = lm.parse_stream_event(request, raw)
+
+    assert isinstance(parsed, StreamDeltaEvent)
+    assert parsed.delta == ThinkingDelta(
+        text="Multiplied partial products.",
+        part_index=0,
+    )
+
+
 def test_openai_stream_parses_output_text_annotations() -> None:
     lm = OpenAILM(api_key="sk-test", transport=_FakeTransport())
     request = Request(model="gpt-test", messages=(Message.user("Hi"),))
@@ -273,6 +406,37 @@ def test_anthropic_payload_uses_developer_prefix_and_reasoning() -> None:
     assert payload["messages"][0]["role"] == "user"
     assert payload["messages"][0]["content"][0]["text"].startswith("[developer]")
     assert payload["metadata"] == {"user_id": "u1"}
+
+
+def test_anthropic_reasoning_max_tokens_reserves_answer_tokens() -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    request = Request(
+        model="claude-test",
+        messages=(Message.user("What is 143 times 27? Think carefully."),),
+        config=Config(reasoning=Reasoning(effort="high", thinking_budget=1024)),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert payload["max_tokens"] == 2048
+
+
+def test_anthropic_reasoning_max_tokens_adds_explicit_visible_budget() -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    request = Request(
+        model="claude-test",
+        messages=(Message.user("Summarize briefly, after thinking."),),
+        config=Config(
+            max_tokens=200,
+            reasoning=Reasoning(effort="medium", thinking_budget=1024),
+        ),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
+    assert payload["max_tokens"] == 1224
 
 
 def test_gemini_stream_event_can_emit_delta_and_end_from_one_sse() -> None:

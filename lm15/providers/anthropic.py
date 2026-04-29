@@ -66,6 +66,9 @@ ANTHROPIC_PROVIDER_EXECUTED_BLOCKS = {
     "code_execution_tool_result",
 }
 
+_DEFAULT_ANTHROPIC_VISIBLE_TOKENS = 1024
+_DEFAULT_ANTHROPIC_THINKING_BUDGET = 1024
+
 
 def _attach_unmapped(provider_data: dict[str, Any], unmapped: list[dict[str, str]]) -> dict[str, Any]:
     if not unmapped:
@@ -84,6 +87,51 @@ def _builtin_to_anthropic(tool: BuiltinTool) -> dict[str, Any]:
     if tool.config:
         out.update(tool.config)
     return out
+
+
+def _response_format_to_anthropic_output_config(format_config: dict[str, Any]) -> dict[str, Any]:
+    """Map canonical lm15 response_format to Anthropic output_config."""
+    output_config = format_config.get("output_config")
+    if isinstance(output_config, dict):
+        return dict(output_config)
+
+    if isinstance(format_config.get("format"), dict):
+        return dict(format_config)
+
+    fmt_type = format_config.get("type")
+    if fmt_type == "json_schema":
+        schema = format_config.get("schema")
+        return {"format": {"type": "json_schema", "schema": schema if isinstance(schema, dict) else {}}}
+
+    if fmt_type == "json_object":
+        return {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+
+    schema = format_config.get("schema") if isinstance(format_config.get("schema"), dict) else format_config
+    return {"format": {"type": "json_schema", "schema": schema}}
+
+
+def _reasoning_thinking_budget(request: Request) -> int | None:
+    reasoning = request.config.reasoning
+    if reasoning is None or reasoning.is_off:
+        return None
+    return reasoning.thinking_budget or _DEFAULT_ANTHROPIC_THINKING_BUDGET
+
+
+def _max_tokens_for_anthropic(request: Request, thinking_budget: int | None) -> int:
+    if thinking_budget is None:
+        return request.config.max_tokens or _DEFAULT_ANTHROPIC_VISIBLE_TOKENS
+
+    reasoning = request.config.reasoning
+    if reasoning is not None and reasoning.total_budget is not None:
+        if reasoning.total_budget <= thinking_budget:
+            raise ValueError(
+                "Anthropic requires Reasoning.total_budget to be greater than "
+                "Reasoning.thinking_budget because max_tokens includes thinking tokens"
+            )
+        return reasoning.total_budget
+
+    visible_budget = request.config.max_tokens or _DEFAULT_ANTHROPIC_VISIBLE_TOKENS
+    return thinking_budget + visible_budget
 
 
 def _finish_reason(stop_reason: str | None, *, has_tool_call: bool = False) -> str:
@@ -336,11 +384,12 @@ class AnthropicLM(BaseProviderLM):
         if prompt_caching and len(messages) >= 2 and messages[-2].get("content"):
             messages[-2]["content"][-1].setdefault("cache_control", {"type": "ephemeral"})
 
+        thinking_budget = _reasoning_thinking_budget(request)
         payload: dict[str, Any] = {
             "model": request.model,
             "messages": messages,
             "stream": stream,
-            "max_tokens": request.config.max_tokens or 1024,
+            "max_tokens": _max_tokens_for_anthropic(request, thinking_budget),
         }
         if request.system:
             system_text = request.system if isinstance(request.system, str) else parts_to_text(request.system)
@@ -367,11 +416,13 @@ class AnthropicLM(BaseProviderLM):
         tool_choice = self._tool_choice_payload(request)
         if tool_choice is not None:
             payload["tool_choice"] = tool_choice
-        if request.config.reasoning and not request.config.reasoning.is_off:
+        if thinking_budget is not None:
             payload["thinking"] = {
                 "type": "enabled",
-                "budget_tokens": request.config.reasoning.thinking_budget or 1024,
+                "budget_tokens": thinking_budget,
             }
+        if request.config.response_format:
+            payload["output_config"] = _response_format_to_anthropic_output_config(request.config.response_format)
         if extensions:
             passthrough = {k: v for k, v in extensions.items() if k != "prompt_caching"}
             payload.update(passthrough)

@@ -113,6 +113,69 @@ def _builtin_to_gemini(tool: BuiltinTool) -> dict[str, Any]:
     return {_GEMINI_BUILTIN_MAP.get(tool.name, tool.name): tool.config or {}}
 
 
+def _gemini_schema_field(schema: dict[str, Any]) -> str:
+    """Pick Gemini's schema field for an lm15 JSON schema.
+
+    ``responseSchema`` is Gemini's OpenAPI-ish schema type and rejects JSON
+    Schema keywords such as ``additionalProperties``.  ``responseJsonSchema``
+    accepts those keywords, so use it when the schema needs full JSON Schema.
+    """
+    return "responseJsonSchema" if _contains_key(schema, "additionalProperties") else "responseSchema"
+
+
+def _contains_key(value: Any, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_contains_key(v, key) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(v, key) for v in value)
+    return False
+
+
+def _response_format_to_gemini_config(format_config: dict[str, Any]) -> dict[str, Any]:
+    """Map canonical lm15 response_format to Gemini generationConfig."""
+    generation_config = format_config.get("generationConfig")
+    if isinstance(generation_config, dict):
+        return dict(generation_config)
+
+    out: dict[str, Any] = {}
+    mime_type = format_config.get("responseMimeType") or format_config.get("response_mime_type")
+    schema = format_config.get("responseSchema") or format_config.get("response_schema")
+    json_schema = format_config.get("responseJsonSchema") or format_config.get("response_json_schema")
+
+    if mime_type is not None:
+        out["responseMimeType"] = str(mime_type)
+    if isinstance(schema, dict):
+        out["responseSchema"] = schema
+    if isinstance(json_schema, dict):
+        out["responseJsonSchema"] = json_schema
+
+    fmt_type = format_config.get("type")
+    if fmt_type == "json_object":
+        out.setdefault("responseMimeType", "application/json")
+        return out
+
+    if fmt_type == "json_schema":
+        schema = format_config.get("schema")
+        if isinstance(schema, dict):
+            out[_gemini_schema_field(schema)] = schema
+            out.pop("responseSchema" if _gemini_schema_field(schema) == "responseJsonSchema" else "responseJsonSchema", None)
+        out.setdefault("responseMimeType", "application/json")
+        return out
+
+    schema = format_config.get("schema") if isinstance(format_config.get("schema"), dict) else None
+    if schema is not None:
+        out[_gemini_schema_field(schema)] = schema
+        out.pop("responseSchema" if _gemini_schema_field(schema) == "responseJsonSchema" else "responseJsonSchema", None)
+        out.setdefault("responseMimeType", "application/json")
+        return out
+
+    if "type" in format_config or "properties" in format_config or "items" in format_config:
+        out[_gemini_schema_field(format_config)] = dict(format_config)
+        out.setdefault("responseMimeType", "application/json")
+
+    return out or dict(format_config)
+
+
 def _finish_reason(reason: str | None, *, has_tool_call: bool = False) -> str:
     if has_tool_call:
         return "tool_call"
@@ -447,7 +510,7 @@ class GeminiLM(BaseProviderLM):
         if request.config.stop:
             generation_config["stopSequences"] = list(request.config.stop)
         if request.config.response_format:
-            generation_config.update(request.config.response_format)
+            generation_config.update(_response_format_to_gemini_config(request.config.response_format))
         if request.config.reasoning is not None:
             if request.config.reasoning.is_off:
                 generation_config["thinkingConfig"] = {"thinkingBudget": 0}

@@ -162,14 +162,11 @@ def pretty(value, *, width=100):
     """Pretty-print nested execute() results in notebooks/scripts."""
     pprint.pp(value, width=width, sort_dicts=False, compact=False)
 ```
-```output
+```output | ✓ 5ms | 21 vars
 Loaded .env from: /home/maxime/Projects/lm15-dev/.env
   OPENAI_API_KEY: sk-proj...mtMA
   ANTHROPIC_API_KEY: sk-ant-...awAA
   GEMINI_API_KEY: AIzaSyB...nH1w
-
-
-⏳ running…
 ```
 
 ---
@@ -183,7 +180,7 @@ Basic text generation and multi-turn conversations use `Message.user` and `Messa
 from lm15.types import Request, Message
 ```
 
-```
+```python
 # basic_text
 req_basic = Request(
     model="placeholder", 
@@ -192,7 +189,7 @@ req_basic = Request(
 r = execute(req_basic)
 pretty(r)
 ```
-```output | ✓ 7.8s | 27 vars
+```output | ✓ 5.9s | 30 vars
 {'responses': [{'provider': 'openai',
                 'model': 'gpt-5.4-mini',
                 'response': Response(
@@ -200,7 +197,7 @@ pretty(r)
     model='gpt-5.4-mini-2026-03-17',
     finish_reason='stop',
     usage=Usage(input_tokens=9, output_tokens=6, total_tokens=15, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
-    id='resp_0d023e6760ec43900069f219b83120819c9739094737beb9ec',
+    id='resp_0f6b2743f87144650069f26b3c5908819095b4e898d9668249',
     provider_data=<dict: 35 keys>,
 )},
                {'provider': 'anthropic',
@@ -210,7 +207,7 @@ pretty(r)
     model='claude-sonnet-4-5-20250929',
     finish_reason='stop',
     usage=Usage(input_tokens=10, output_tokens=12, total_tokens=22, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
-    id='msg_01VMNkrriLtrTn9eGLopJ4eX',
+    id='msg_01X7qUu6pmsJ4HRrCDfn6yYd',
     provider_data=<dict: 9 keys>,
 )},
                {'provider': 'gemini',
@@ -219,13 +216,13 @@ pretty(r)
     text='Hello! How can I help you today?',
     model='gemini-3-flash-preview',
     finish_reason='stop',
-    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=93, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=80, input_audio_tokens=None, output_audio_tokens=None),
-    id='vhnyaaTiNLPf_uMP6NO-kQg',
+    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=52, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=39, input_audio_tokens=None, output_audio_tokens=None),
+    id='QWvyaa3uCOuV_uMPjc_eoAk',
     provider_data=<dict: 4 keys>,
 )}],
  'streams': [{'provider': 'openai',
               'model': 'gpt-5.4-mini',
-              'events': [StreamStartEvent(id='resp_0b8614212067d7f60069f219b8ff24819dab2df73cd22effec',
+              'events': [StreamStartEvent(id='resp_00e27c18a35c46550069f26b3d4918819699752b1df80b0af6',
                                           model='gpt-5.4-mini-2026-03-17',
                                           type='start'),
                          StreamDeltaEvent(delta=TextDelta(text='Hello', part_index=0, type='text'),
@@ -240,14 +237,14 @@ pretty(r)
 )]},
              {'provider': 'anthropic',
               'model': 'claude-sonnet-4-5',
-              'events': [StreamStartEvent(id='msg_016d6G3PpU3aoqJUx4CeMFPK',
+              'events': [StreamStartEvent(id='msg_01Fj3TG729vCPCi6qGSmroYr',
                                           model='claude-sonnet-4-5-20250929',
                                           type='start'),
-                         StreamDeltaEvent(delta=TextDelta(text='Hello! How',
+                         StreamDeltaEvent(delta=TextDelta(text='Hello! How can',
                                                           part_index=0,
                                                           type='text'),
                                           type='delta'),
-                         StreamDeltaEvent(delta=TextDelta(text=' can I help you today?',
+                         StreamDeltaEvent(delta=TextDelta(text=' I help you today?',
                                                           part_index=0,
                                                           type='text'),
                                           type='delta'),
@@ -257,11 +254,7 @@ pretty(r)
 )]},
              {'provider': 'gemini',
               'model': 'gemini-3-flash-preview',
-              'events': [StreamDeltaEvent(delta=TextDelta(text='Hello! How can I help',
-                                                          part_index=0,
-                                                          type='text'),
-                                          type='delta'),
-                         StreamDeltaEvent(delta=TextDelta(text=' you today?',
+              'events': [StreamDeltaEvent(delta=TextDelta(text='Hello! How can I help you today?',
                                                           part_index=0,
                                                           type='text'),
                                           type='delta'),
@@ -269,7 +262,7 @@ pretty(r)
                                           type='delta'),
                          StreamEndEvent(
     finish_reason='stop',
-    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=54, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=41, input_audio_tokens=None, output_audio_tokens=None),
+    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=57, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=44, input_audio_tokens=None, output_audio_tokens=None),
     provider_data=<dict: 4 keys>,
     type='end',
 )]}],
@@ -863,7 +856,110 @@ req_tools = Request(
 )
 
 # Run complete to see tool calls parsed into Python objects
-execute(req_tools, stream=False)
+pretty(execute(req_tools))
+```
+```output | ✓ 6.4s | 26 vars
+{'responses': [{'provider': 'openai',
+                'model': 'gpt-5.4-mini',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='call_9o6rpeTeUu4WsdkvhutYERxE', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='gpt-5.4-mini-2026-03-17',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=51, output_tokens=19, total_tokens=70, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
+    id='resp_05300d32e8a3ee2e0069f2607e5c4c819486be283696613030',
+    provider_data=<dict: 35 keys>,
+)},
+               {'provider': 'anthropic',
+                'model': 'claude-sonnet-4-5',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='toolu_01T8fvpVUrjfFb4oo4sZTuXc', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='claude-sonnet-4-5-20250929',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=565, output_tokens=53, total_tokens=618, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    id='msg_01Guhz5ZvZLwSx4dwGQw35HX',
+    provider_data=<dict: 9 keys>,
+)},
+               {'provider': 'gemini',
+                'model': 'gemini-3-flash-preview',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='silzxots', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='gemini-3-flash-preview',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=52, output_tokens=16, total_tokens=93, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=25, input_audio_tokens=None, output_audio_tokens=None),
+    id='g2DyacbxKe2p1MkPmYiEmAk',
+    provider_data=<dict: 4 keys>,
+)}],
+ 'streams': [{'provider': 'openai',
+              'model': 'gpt-5.4-mini',
+              'events': [StreamStartEvent(id='resp_0e91571cd4c0e2190069f2607f7430819389d2484295a7e58b',
+                                          model='gpt-5.4-mini-2026-03-17',
+                                          type='start'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='',
+                                                              part_index=0,
+                                                              id='call_fInF5KkaQuMwheaw7Y3RxAco',
+                                                              name='get_weather',
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='{"',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='city',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='":"',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='Mont',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='real',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='"}',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamEndEvent(
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=51, output_tokens=19, total_tokens=70, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
+    provider_data=<dict: 34 keys>,
+    type='end',
+)]},
+             {'provider': 'anthropic',
+              'model': 'claude-sonnet-4-5',
+              'events': [StreamStartEvent(id='msg_01CTdUQb4Q3zsmJaKscJT8dw',
+                                          model='claude-sonnet-4-5-20250929',
+                                          type='start'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='{}',
+                                                              part_index=0,
+                                                              id='toolu_01Hd35RGKvia5QTLkSbKaCMi',
+                                                              name='get_weather',
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+… 45 more lines
 ```
 
 ---
@@ -874,7 +970,7 @@ execute(req_tools, stream=False)
 Use `ToolChoice` inside `Config` to control how the model uses tools. `lm15` handles translating these into the specific provider constraints.
 
 ```python
-from lm15.types import ToolChoice
+from lm15.types import ToolChoice, Config
 
 # Force the model to use the 'get_weather' tool (tool_choice_specific / tool_choice_required)
 # We also set parallel=False (disables parallel tool calls natively across providers)
@@ -883,7 +979,110 @@ req_forced = dataclasses.replace(
     config=Config(tool_choice=ToolChoice.from_tools("get_weather", mode="required", parallel=False))
 )
 
-execute(req_forced, stream=False)
+pretty(execute(req_forced))
+```
+```output | ✓ 8.1s | 29 vars
+{'responses': [{'provider': 'openai',
+                'model': 'gpt-5.4-mini',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='call_XCAnQiTB1aCJM0LkbIiKy3dQ', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='gpt-5.4-mini-2026-03-17',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=129, output_tokens=19, total_tokens=148, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
+    id='resp_0427aa20b801df7a0069f260a5fe4081a0b2ac85f2c50cf0fe',
+    provider_data=<dict: 35 keys>,
+)},
+               {'provider': 'anthropic',
+                'model': 'claude-sonnet-4-5',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='toolu_0189CrDCnSwd55JVB87GZ4ea', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='claude-sonnet-4-5-20250929',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=663, output_tokens=24, total_tokens=687, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    id='msg_018WDThb31riyhByRg4sXvjY',
+    provider_data=<dict: 9 keys>,
+)},
+               {'provider': 'gemini',
+                'model': 'gemini-3-flash-preview',
+                'response': Response(
+    message=Message(role='assistant', parts=(ToolCallPart(id='cuhue3qe', name='get_weather', input={'city': 'Montreal'}, type='tool_call'),)),
+    model='gemini-3-flash-preview',
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=52, output_tokens=16, total_tokens=102, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=34, input_audio_tokens=None, output_audio_tokens=None),
+    id='rGDyaYzVL5TQ1MkP78O-sA0',
+    provider_data=<dict: 4 keys>,
+)}],
+ 'streams': [{'provider': 'openai',
+              'model': 'gpt-5.4-mini',
+              'events': [StreamStartEvent(id='resp_0807724856288ec90069f260a6e58c8194bed1de81b4e94ca4',
+                                          model='gpt-5.4-mini-2026-03-17',
+                                          type='start'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='',
+                                                              part_index=0,
+                                                              id='call_vpFSmEQvmCPVDQ8aZ5xygenX',
+                                                              name='get_weather',
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='{"',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='city',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='":"',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='Mont',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='real',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='"}',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamEndEvent(
+    finish_reason='tool_call',
+    usage=Usage(input_tokens=129, output_tokens=19, total_tokens=148, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
+    provider_data=<dict: 34 keys>,
+    type='end',
+)]},
+             {'provider': 'anthropic',
+              'model': 'claude-sonnet-4-5',
+              'events': [StreamStartEvent(id='msg_016RBzpbiG2fHiNxdcQGnuGB',
+                                          model='claude-sonnet-4-5-20250929',
+                                          type='start'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='{}',
+                                                              part_index=0,
+                                                              id='toolu_01AkZnGeppLhweU9ajxHqMQq',
+                                                              name='get_weather',
+                                                              type='tool_call'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ToolCallDelta(input='',
+                                                              part_index=0,
+                                                              id=None,
+                                                              name=None,
+                                                              type='tool_call'),
+                                          type='delta'),
+… 33 more lines
 ```
 
 ---
@@ -909,6 +1108,18 @@ req_builtin = Request(
 execute(req_builtin, stream=True, providers=["gemini", "anthropic"])
 ```
 
+```output | ✓ 27.4s | 32 vars
+{'responses': [], 'streams': [{'provider': 'gemini', 'model': 'gemini-3-flash-preview', 'events': [StreamDeltaEvent(delta=TextDelta(text='', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Today, Wednesday, April 29, 2026,', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' the news is dominated by intensifying conflict in the Middle East, a major shift in the global oil market, and significant legal developments in the', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' United States.\n\n### **Global Conflict & Geopolitics**\n*   **Iran War & Blockade:** T', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='ensions continue to escalate as President Trump maintains a naval blockade of Iran. Reports indicate he rejected an Iranian proposal to reopen the Strait of Horm', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text="uz in exchange for lifting the blockade, insisting on a total end to Iran's nuclear enrichment. \n*   **Israel", part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='-Lebanon Strikes:** Israeli airstrikes in southern Lebanon killed at least five people today, including three emergency responders. Meanwhile, the', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' IDF reported destroying a large Hezbollah tunnel system in a powerful blast near the town of Qantra.\n*   **Russia', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='-Ukraine War:** A Ukrainian SBU drone successfully struck an oil refinery near Perm, Russia, causing a massive fire at the facility.\n', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='*   **UAE Exits OPEC:** In a major move for global energy markets, the United Arab Emirates announced its withdrawal from OPEC', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' after nearly 60 years of membership. The UAE cited a desire to unilaterally increase oil production, causing Brent crude prices to climb', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' to approximately $112 a barrel.\n\n### **U.S. Politics & Legal News**\n*   **', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='James Comey Indicted:** Former FBI Director James Comey was indicted by a federal grand jury over a social media post of', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' seashells arranged to read "86 47." Officials allege the post constituted a death threat against President Trump.\n*   **Minnesota', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' FBI Raids:** The FBI conducted raids on over 20 locations in Minneapolis today as part of an ongoing fraud investigation.', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' The activity reportedly centered on Somali-linked businesses.\n*   **Senate Vote on Cuba:** The Senate narrowly voted (', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='51-47) to block a Democratic-led resolution that would have required congressional approval for any military action against Cuba.\n\n', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='### **Business & Technology**\n*   **Alphabet & Anthropic:** In one of the largest AI deals to date, Alphabet Inc.', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' announced a $40 billion investment into the AI startup Anthropic.\n*   **Musk vs. OpenAI:** Elon Musk is set', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=" to testify this week in his high-profile lawsuit against OpenAI and CEO Sam Altman, centered on the company's shift", part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' away from its original non-profit mission.\n*   **Federal Reserve:** The FOMC announced it would maintain the', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' federal funds rate at its current range of 3.5% to 3.75%, citing "elevated inflation" and global', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' uncertainty.\n*   **Electric Air Taxis:** Joby Aviation successfully completed a milestone flight of its electric air taxi between Manhattan', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' and JFK Airport, aiming to reduce a two-hour drive to a 10-minute flight.\n\n### **Other', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' Notable News**\n*   **UK Terrorist Attack:** Police in London are investigating a stabbing in Golders Green that', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' left two Jewish men injured, describing it as a terrorist attack.\n*   **Medical Breakthrough:** The Mayo Clinic announced a significant', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' breakthrough in early-stage cancer detection, though further clinical trials are expected.\n*   **Thailand:** Former Prime Minister Thaksin Shin', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='awatra has been approved for early release from prison on probation due to his age and health.', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='', part_index=0, type='text'), type='delta'), StreamEndEvent(
+    finish_reason='stop',
+    usage=Usage(input_tokens=79, output_tokens=682, total_tokens=1386, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=625, input_audio_tokens=None, output_audio_tokens=None),
+    provider_data=<dict: 4 keys>,
+    type='end',
+)]}, {'provider': 'anthropic', 'model': 'claude-sonnet-4-5', 'events': [StreamStartEvent(id='msg_01Axd6LaNYQ9WSCgfwQSdnMm', model='claude-sonnet-4-5-20250929', type='start'), StreamDeltaEvent(delta=ToolCallDelta(input='', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=ToolCallDelta(input='{"query"', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=ToolCallDelta(input=': ', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=ToolCallDelta(input='"news', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=ToolCallDelta(input=' today April', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=ToolCallDelta(input=' 29 2026"}', part_index=0, id=None, name=None, type='tool_call'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Based on today', part_index=2, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text="'s news (April 29, 2026), here are the major headlines:", part_index=2, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n\n## Iran Conflict & Blockade', part_index=2, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n', part_index=2, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='US President Donald Trump said Wednesday that he has rejected the Iranian proposal of lifting the US blockade and opening the Strait of Hormuz. ', url='https://www.cnn.com/2026/04/29/world/live-news/iran-war-peace-proposal-trump', title='Live updates: Iran war news, UAE quits OPEC, Trump says Iran ‘better get smart soon’ | CNN', part_index=3, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text="President Trump rejected Iran's proposal to lift the US blockade and", part_index=3, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' reopen the Strait of Hormuz', part_index=3, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=', demanding guarantees on cur', part_index=4, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text="bing Iran's nuclear program first. ", part_index=4, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Here’s today’s news: IRAN WAR – CEASEFIRE · President Trump has instructed aides to prepare for an extended blockade of Iran as negotiations remain st...', url='https://www.justsecurity.org/137394/early-edition-april-29-2026/', title='Early Edition: April 29, 2026', part_index=5, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Trump has instructed a', part_index=5, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='ides to prepare for an extended blockade of Iran as negotiations remain', part_index=5, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' stalled, assessing that maintaining the blockade carries less', part_index=5, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' risk than other options', part_index=5, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='. ', part_index=6, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Follow · Gas prices have climbed to an average of $4.23 per gallon — the highest level since August 2022 — according to AAA. ', url='https://www.cnn.com/2026/04/29/us/5-things-to-know-for-april-29-free-speech-king-charles-tornado-devastation-elon-musk-passports', title='5 things to know for April 29: Free speech, King Charles, tornado devastation, Elon Musk, passports | CNN', part_index=7, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Gas prices have climbed to $4.23', part_index=7, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' per gallon — the highest level since August 2022', part_index=7, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='.\n\n## Federal Reserve &', part_index=8, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' Markets', part_index=8, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n', part_index=8, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='The S&P 500 was relatively unchanged on Wednesday, while oil prices continued their rally amid a U.S. blockade of Iranian ports and after the Federal ...', url='https://www.cnbc.com/2026/04/28/stock-market-today-live-updates.html', title='Stock market today: Live updates', part_index=9, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='The Federal Reserve left its key interest rate unchanged', part_index=9, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='. ', part_index=10, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Stocks were slightly lower and oil prices climbed as Wall Street looked ahead to earnings reports from four of the “Magnificent Seven” companies and a...', url='https://www.thestreet.com/latest-news/stock-market-today-apr-29-2026-update', title='Stock Market Today (Apr. 29, 2026): Fed holds rates but is most mixed since 1992 amid Middle East conflict; Big Tech reports to follow - TheStreet', part_index=11, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Stocks were slightly lower', part_index=11, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' and oil prices climbed as Wall Street looked ahead', part_index=11, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' to earnings reports from four of the "Magnificent Seven" companies', part_index=11, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='. ', part_index=12, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Alphabet Inc. (GOOG), Amazon (AMZN), Meta Platforms (META), and Microsoft (MSFT) will have an opportunity to avert anxieties with tech after the bell,...', url='https://www.thestreet.com/latest-news/stock-market-today-apr-29-2026-update', title='Stock Market Today (Apr. 29, 2026): Fed holds rates but is most mixed since 1992 amid Middle East conflict; Big Tech reports to follow - TheStreet', part_index=13, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Alphabet, Amazon, Meta', part_index=13, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' Platforms, and Microsoft will report quarterly earnings after the bell', part_index=13, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='.\n\n## Apple Leadership', part_index=14, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' Change', part_index=14, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n', part_index=14, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Apple recently announced that Tim Cook will step down as CEO and transition to executive chairman of the board. John Ternus, currently senior vice pre...', url='https://www.thestreet.com/latest-news/stock-market-today-apr-29-2026-update', title='Stock Market Today (Apr. 29, 2026): Fed holds rates but is most mixed since 1992 amid Middle East conflict; Big Tech reports to follow - TheStreet', part_index=15, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='Apple recently announced that Tim Cook will step', part_index=15, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' down as CEO and transition to executive chairman of the board, with John', part_index=15, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' Ternus, currently senior vice president of Hardware Engineering', part_index=15, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=', becoming CEO effective September', part_index=15, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='.\n\n## King Charles in US', part_index=16, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n', part_index=16, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='Britain’s King Charles III and Queen Camilla will travel to New York City today to visit the 9/11 memorial and meet with families of victims. The visi...', url='https://www.cnn.com/2026/04/29/us/5-things-to-know-for-april-29-free-speech-king-charles-tornado-devastation-elon-musk-passports', title='5 things to know for April 29: Free speech, King Charles, tornado devastation, Elon Musk, passports | CNN', part_index=17, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='King Charles III and Queen Camilla will travel to New York City today', part_index=17, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=" to visit the 9/11 memorial, following the king's historic", part_index=17, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' address to Congress on Tuesday', part_index=17, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='.\n\n## Other Headlines', part_index=18, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='\n', part_index=18, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='... A federal grand jury has again indicted former FBI Director James Comey, this time over his social media post showing seashells arranged on a beac...', url='https://www.democracynow.org/2026/4/29/headlines', title='Headlines for April 29, 2026 | Democracy Now!', part_index=19, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='A federal grand jury has again indicted former FBI Director James Comey over a social media post', part_index=19, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=', and ', part_index=20, type='text'), type='delta'), StreamDeltaEvent(delta=CitationDelta(text='WATCH: Moments from King Charles’ speech to Congress that drew laughter · Several people were injured after a tornado tore through Mineral Wells, Texa...', url='https://www.cnn.com/2026/04/29/us/5-things-to-know-for-april-29-free-speech-king-charles-tornado-devastation-elon-musk-passports', title='5 things to know for April 29: Free speech, King Charles, tornado devastation, Elon Musk, passports | CNN', part_index=21, type='citation'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='a tornado tore through Mineral Wells', part_index=21, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=', Texas, on Tuesday night, flattening parts of the town about 80 miles west', part_index=21, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text=' of Dallas', part_index=21, type='text'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='.', part_index=22, type='text'), type='delta'), StreamEndEvent(
+    finish_reason='stop',
+    type='end',
+)]}], 'errors': []}
+```
+
 ---
 
 ## 8. Structured Output
@@ -917,6 +1128,8 @@ execute(req_builtin, stream=True, providers=["gemini", "anthropic"])
 Define response formats cleanly. `lm15` formats it for the specific provider (`response_format` for OpenAI, `generationConfig.responseSchema` for Gemini, `output_config` for Anthropic).
 
 ```python
+from lm15.types import Request, Message, Config
+
 recipe_schema = {
     "type": "json_schema",
     "name": "recipe",
@@ -940,6 +1153,33 @@ req_json = Request(
 
 execute(req_json, stream=False)
 ```
+```output | ✓ 6.5s | 26 vars
+{'responses': [{'provider': 'openai', 'model': 'gpt-5.4-mini', 'response': Response(
+    text='{"name":"Classic Chocolate Chip Cookies","ingredients":["2 1/4 cups all-purpose flour","1/2 teaspoon baking soda","1/2 teaspoon salt","1 cup unsalted butter, softened","3/4 cup granulated sugar","3/4 cup packed brown sugar","1 teaspoon vanilla extract","2 large eggs","2 cups chocolate chips"]}',
+    model='gpt-5.4-mini-2026-03-17',
+    finish_reason='stop',
+    usage=Usage(input_tokens=46, output_tokens=79, total_tokens=125, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
+    id='resp_0e1b7d5515f48ce60069f2635b6a3481a39cdbd731538043f1',
+    provider_data=<dict: 35 keys>,
+)}, {'provider': 'anthropic', 'model': 'claude-sonnet-4-5', 'response': Response(
+    text='{"name":"Chocolate Chip Cookies","ingredients":["2 1/4 cups all-purpose flour","1 tsp baking soda","1 tsp salt","1 cup butter, softened","3/4 cup granulated sugar","3/4 cup packed brown sugar","2 large eggs","2 tsp vanilla extract","2 cups chocolate chips"]}',
+    model='claude-sonnet-4-5-20250929',
+    finish_reason='stop',
+    usage=Usage(input_tokens=192, output_tokens=91, total_tokens=283, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    id='msg_01RFrBrx8P6irsUSxha3fDme',
+    provider_data=<dict: 9 keys>,
+)}, {'provider': 'gemini', 'model': 'gemini-3-flash-preview', 'response': Response(
+    text='{"name":"Chocolate Chip Cookies","ingredients":["1 cup butter, softened","1 cup white sugar","1 cup packed brown sugar","2 eggs","2 teaspoons vanilla extract","1 teaspoon baking soda","2 teaspoons hot water","1/2 teaspoon salt","3 cups all-purpose flour","2 cups semisweet chocolate chips"]}',
+    model='gemini-3-flash-preview',
+    finish_reason='stop',
+    usage=Usage(input_tokens=7, output_tokens=64, total_tokens=448, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=377, input_audio_tokens=None, output_audio_tokens=None),
+    id='YWPyaYTNJqmb_uMP9rnDmQc',
+    provider_data=<dict: 4 keys>,
+)}], 'streams': [], 'errors': []}
+```
+
+With configured API keys, each provider returns JSON matching the schema and
+`errors` should be empty.
 
 ---
 
@@ -948,33 +1188,182 @@ execute(req_json, stream=False)
 
 Enable models that think before they answer.
 
-```python
-from lm15.types import Reasoning
+OpenAI does not expose raw chain-of-thought. It reports reasoning token usage by
+default, and can return a provider-generated reasoning summary when requested
+with `summary="auto"`, `"concise"`, or `"detailed"`. Providers that expose
+thinking directly, such as Anthropic and Gemini, surface it as `ThinkingPart` /
+`ThinkingDelta`. Anthropic currently reports thinking usage as part of combined
+`output_tokens` rather than a separate exact `usage.reasoning_tokens` count, so
+`usage.reasoning_tokens` remains `None` for Anthropic responses.
 
-# Note: Providers require specific models for reasoning. 
-# We'll test Anthropic's claude-3-7-sonnet-latest natively here.
+```python
+from lm15.types import Reasoning, Config, Message, Request
 
 req_reasoning = Request(
-    model="claude-3-7-sonnet-latest",
+    model="placeholder",
     messages=(Message.user("What is 143 times 27? Think carefully."),),
     config=Config(
         reasoning=Reasoning(
             effort="high",
-            thinking_budget=1024
+            thinking_budget=1024,
+            summary="auto",  # OpenAI: request a reasoning summary when supported.
         )
     )
 )
 
-print("\n\033[1m========== ANTHROPIC (Reasoning) ==========\033[0m")
-try:
-    for event in lms["anthropic"].stream(req_reasoning):
-        if isinstance(event, StreamDeltaEvent):
-            if isinstance(event.delta, TextDelta):
-                print(event.delta.text, end="", flush=True)
-            elif isinstance(event.delta, ThinkingDelta):
-                # We render thoughts in gray
-                print(f"\033[90m{event.delta.text}\033[0m", end="", flush=True)
-    print()
-except Exception as e:
-    print(f"Error: {e}")
+r = execute(req_reasoning)
+pretty(r)
+```
+```output | ✓ 29.1s | 27 vars
+{'responses': [{'provider': 'openai',
+                'model': 'gpt-5.4-mini',
+                'response': Response(
+    text='143 × 27 = **3861**.',
+    model='gpt-5.4-mini-2026-03-17',
+    finish_reason='stop',
+    usage=Usage(input_tokens=17, output_tokens=54, total_tokens=71, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=38, input_audio_tokens=None, output_audio_tokens=None),
+    id='resp_0d661a636c9129d00069f26d37c2fc819dbd7dab3e1cb9a812',
+    provider_data=<dict: 35 keys>,
+)},
+               {'provider': 'anthropic',
+                'model': 'claude-sonnet-4-5',
+                'response': Response(
+    text='143 × 27 = 3,861\n\nTo break this down:\n- 143 × 20 = 2,860\n- 143 × 7 = 1,001\n- 2,860 + 1,001 = 3,861',
+    model='claude-sonnet-4-5-20250929',
+    finish_reason='stop',
+    usage=Usage(input_tokens=48, output_tokens=225, total_tokens=273, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    id='msg_01JRYpifFPYSXCEhJk95McNf',
+    provider_data=<dict: 9 keys>,
+)},
+               {'provider': 'gemini',
+                'model': 'gemini-3-flash-preview',
+                'response': Response(
+    text='To find the product of 143 and 27, you can break it down using the distributive property or standard long multiplication.\n\n### Method 1: Long Multiplication\n1.  **Multiply 143 by 7:**\n    *   $7 \\times 3 = 21$ (Write down 1, carry the 2)\n    *   $7 \\times 4 = 28$\n    *   $28 + 2 = 30$ (Write down 0, carry the 3)\n    *   $7 \\times 1 = 7$\n    *   $7 + 3 = 10$\n    *   Result: **1,001**\n\n2.  **Multiply 143 by 20 (the "2" in 27):**\n    *   Put a 0 in the ones place.\n    *   $2 \\times 3 = 6$\n    *   $2 \\times 4 = 8$\n    *   $2 \\times 1 = 2$\n    *   Result: **2,860**\n\n3.  **Add the two results together:**\n    *   $1,001 + 2,860 = 3,861$\n\n### Method 2: Decomposition\nYou can also think of it as $143 \\times (20 + 7)$:\n*   $143 \\times 20 = 2,860$\n*   $143 \\times 7 = 1,001$\n*   $2,860 + 1,001 = 3,861$\n\n**Answer:** \n143 times 27 is **3,861**.',
+    model='gemini-3-flash-preview',
+    finish_reason='stop',
+    usage=Usage(input_tokens=15, output_tokens=399, total_tokens=1029, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=615, input_audio_tokens=None, output_audio_tokens=None),
+    id='UG3yab3rCsS2_uMPwOGvkAw',
+    provider_data=<dict: 4 keys>,
+)}],
+ 'streams': [{'provider': 'openai',
+              'model': 'gpt-5.4-mini',
+              'events': [StreamStartEvent(id='resp_0662a84d796b07c10069f26d3d0a2c819fb3cb3b03a321ab50',
+                                          model='gpt-5.4-mini-2026-03-17',
+                                          type='start'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text='**Calculating multiplication '
+                                                                   'carefully**\n'
+                                                                   '\n'
+                                                                   'I',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' need',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' to',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' provide',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' the',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' answer',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' to',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' the',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' multiplication',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' question',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=',',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' but',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' the',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' user',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' seems',
+                                                              part_index=0,
+                                                              type='thinking'),
+                                          type='delta'),
+                         StreamDeltaEvent(delta=ThinkingDelta(text=' to',
+                                                              part_index=0,
+… 526 more lines
+```
+
+With configured API keys, OpenAI responses include `usage.reasoning_tokens` and,
+when the model returns one, a reasoning summary parsed as `ThinkingPart`.
+Anthropic and Gemini responses may include `ThinkingPart` content; Gemini also
+reports separate reasoning token counts when the API returns them, while
+Anthropic exposes only combined `output_tokens`. The visible answer is available
+as usual through `response.text` when the response is pure text, or via
+`response.message.parts_of(TextPart)` for mixed text/thinking responses.
+
+
+```python
+from lm15.types import ThinkingPart
+
+response = r['responses'][1]['response']
+response.message.parts_of(ThinkingPart)
+```
+```output | ✓ 1ms | 29 vars
+[ThinkingPart(text="I need to calculate 143 × 27.\n\nLet me break this down:\n143 × 27 = 143 × (20 + 7)\n         = 143 × 20 + 143 × 7\n         = 2860 + 1001\n         = 3861\n\nLet me verify this another way:\n143 × 27\n= (100 + 40 + 3) × 27\n= 100 × 27 + 40 × 27 + 3 × 27\n= 2700 + 1080 + 81\n= 3861\n\nYes, that's correct.", redacted=False, type='thinking')]
+```
+
+```python ✓
+response.usage.reasoning_tokens
+```
+```python
+response.message
+```
+```output | ✓ 2ms | 29 vars
+Message(role='assistant', parts=(ThinkingPart(text="I need to calculate 143 × 27.\n\nLet me break this down:\n143 × 27 = 143 × (20 + 7)\n         = 143 × 20 + 143 × 7\n         = 2860 + 1001\n         = 3861\n\nLet me verify this another way:\n143 × 27\n= (100 + 40 + 3) × 27\n= 100 × 27 + 40 × 27 + 3 × 27\n= 2700 + 1080 + 81\n= 3861\n\nYes, that's correct.", redacted=False, type='thinking'), TextPart(text='143 × 27 = 3,861\n\nTo break this down:\n- 143 × 20 = 2,860\n- 143 × 7 = 1,001\n- 2,860 + 1,001 = 3,861', type='text')))
+```
+
+```python
+response
+```
+```output | ✓ 2ms | 29 vars
+Response(
+    text='143 × 27 = 3,861\n\nTo break this down:\n- 143 × 20 = 2,860\n- 143 × 7 = 1,001\n- 2,860 + 1,001 = 3,861',
+    model='claude-sonnet-4-5-20250929',
+    finish_reason='stop',
+    usage=Usage(input_tokens=48, output_tokens=225, total_tokens=273, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    id='msg_01JRYpifFPYSXCEhJk95McNf',
+    provider_data=<dict: 9 keys>,
+)
+```
+
+```python
+r['errors']
+```
+```output | ✓ 1ms | 29 vars
+[]
 ```

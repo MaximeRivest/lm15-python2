@@ -71,6 +71,7 @@ from ..types import (
     StreamStartEvent,
     TextDelta,
     TextPart,
+    ThinkingDelta,
     ThinkingPart,
     ToolCallDelta,
     ToolCallPart,
@@ -119,6 +120,34 @@ def _builtin_to_openai(tool: BuiltinTool) -> dict[str, Any]:
     if tool.config:
         out.update(tool.config)
     return out
+
+
+def _response_format_to_openai_text(format_config: dict[str, Any]) -> dict[str, Any]:
+    """Map canonical lm15 response_format to OpenAI Responses text config."""
+    text_config = format_config.get("text")
+    if isinstance(text_config, dict):
+        return text_config
+
+    text_format = format_config.get("format")
+    if isinstance(text_format, dict):
+        return dict(format_config)
+
+    if format_config.get("type") == "json_schema":
+        text_format = dict(format_config)
+        text_format.setdefault("name", "response")
+        return {"format": text_format}
+
+    if format_config.get("type") == "json_object":
+        return {"format": dict(format_config)}
+
+    schema = format_config.get("schema") if isinstance(format_config.get("schema"), dict) else format_config
+    return {
+        "format": {
+            "type": "json_schema",
+            "name": str(format_config.get("name") or "response"),
+            "schema": schema,
+        }
+    }
 
 
 def _finish_from_status(data: dict[str, Any], *, has_tool_call: bool = False) -> str:
@@ -469,11 +498,14 @@ class OpenAILM(BaseProviderLM):
         if request.config.tool_choice and request.config.tool_choice.parallel is not None:
             payload["parallel_tool_calls"] = request.config.tool_choice.parallel
         if request.config.response_format:
-            payload.update(request.config.response_format)
+            payload["text"] = _response_format_to_openai_text(request.config.response_format)
         if request.config.reasoning and not request.config.reasoning.is_off:
             effort = request.config.reasoning.effort
             effort = {"adaptive": "medium", "xhigh": "high"}.get(effort, effort)
-            payload["reasoning"] = {"effort": effort}
+            reasoning_payload: dict[str, Any] = {"effort": effort}
+            if request.config.reasoning.summary is not None:
+                reasoning_payload["summary"] = request.config.reasoning.summary
+            payload["reasoning"] = reasoning_payload
         if request.config.extensions:
             passthrough = {k: v for k, v in request.config.extensions.items() if k != "prompt_caching"}
             payload.update(passthrough)
@@ -601,6 +633,14 @@ class OpenAILM(BaseProviderLM):
         if et in {"response.output_text.delta", "response.refusal.delta"}:
             return StreamDeltaEvent(
                 delta=TextDelta(
+                    text=str(payload.get("delta") or ""),
+                    part_index=int(payload.get("output_index", 0) or 0),
+                )
+            )
+
+        if et in {"response.reasoning_summary_text.delta", "response.reasoning_text.delta"}:
+            return StreamDeltaEvent(
+                delta=ThinkingDelta(
                     text=str(payload.get("delta") or ""),
                     part_index=int(payload.get("output_index", 0) or 0),
                 )

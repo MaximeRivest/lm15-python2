@@ -157,9 +157,10 @@ def test_message_filters_power_response_helpers() -> None:
     assert not hasattr(response, "image")
 
 
-def test_response_text_allows_citation_metadata() -> None:
+def test_response_text_allows_metadata_parts() -> None:
     citation = CitationPart(url="https://example.com", title="Example")
-    message = Message.assistant([TextPart("hello"), citation])
+    thinking = ThinkingPart("summary")
+    message = Message.assistant([thinking, TextPart("hello"), citation])
     response = Response(
         id="r1",
         model="m",
@@ -173,6 +174,7 @@ def test_response_text_allows_citation_metadata() -> None:
     assert message.text is None
     assert response.text == "hello"
     assert response.citations == [citation]
+    assert response.message.parts_of(ThinkingPart) == [thinking]
     assert "text='hello'" in rendered
     assert "CitationPart" in rendered
 
@@ -268,13 +270,19 @@ def test_endpoint_request_bases_validate_model_and_prompt() -> None:
 
 def test_reasoning_serde_uses_current_fields_and_reads_legacy_budget() -> None:
     config = Config(
-        reasoning=Reasoning(effort="high", thinking_budget=12, total_budget=100)
+        reasoning=Reasoning(
+            effort="high",
+            thinking_budget=12,
+            total_budget=100,
+            summary="auto",
+        )
     )
 
     assert config_to_dict(config)["reasoning"] == {
         "effort": "high",
         "thinking_budget": 12,
         "total_budget": 100,
+        "summary": "auto",
     }
 
     # Legacy payloads with enabled=False + budget collapse to effort="off";
@@ -284,6 +292,8 @@ def test_reasoning_serde_uses_current_fields_and_reads_legacy_budget() -> None:
 
     with pytest.raises(ValueError, match="effort='off'"):
         Reasoning(effort="off", thinking_budget=7)
+    with pytest.raises(ValueError, match="reasoning summary"):
+        Reasoning(effort="high", summary="verbose")  # type: ignore[arg-type]
 
 
 def test_json_fields_are_validated() -> None:

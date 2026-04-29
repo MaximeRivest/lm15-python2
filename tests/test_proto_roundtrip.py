@@ -401,6 +401,8 @@ def _reasoning_to_proto(pb, reasoning: Reasoning):
         _set_wrapper(out.thinking_budget, reasoning.thinking_budget)
     if reasoning.total_budget is not None:
         _set_wrapper(out.total_budget, reasoning.total_budget)
+    if reasoning.summary is not None:
+        _set_wrapper(out.summary, reasoning.summary)
     return out
 
 
@@ -725,6 +727,7 @@ def _reasoning_from_proto(pb, msg):
         effort=_maps(pb)["effort"][1][msg.effort],
         thinking_budget=_wrapper_value(msg, "thinking_budget"),
         total_budget=_wrapper_value(msg, "total_budget"),
+        summary=_wrapper_value(msg, "summary"),
     )
 
 
@@ -1041,7 +1044,7 @@ def test_request_and_response_roundtrip(pb) -> None:
             stop=("STOP",),
             response_format={"type": "json_object"},
             tool_choice=ToolChoice(mode="required", allowed=("lookup",), parallel=False),
-            reasoning=Reasoning(effort="high", thinking_budget=32, total_budget=64),
+            reasoning=Reasoning(effort="high", thinking_budget=32, total_budget=64, summary="auto"),
             extensions={"openai": {"store": False}},
         ),
     )

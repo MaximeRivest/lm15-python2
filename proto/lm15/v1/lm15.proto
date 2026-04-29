@@ -304,6 +304,7 @@ message Reasoning {
   ReasoningEffort effort = 1;
   google.protobuf.Int32Value thinking_budget = 2;
   google.protobuf.Int32Value total_budget = 3;
+  google.protobuf.StringValue summary = 4;
 }
 
 message ToolChoice {

@@ -77,6 +77,7 @@ FinishReason = Literal["stop", "length", "tool_call", "content_filter", "error"]
 ReasoningEffort = Literal[
     "off", "adaptive", "minimal", "low", "medium", "high", "xhigh"
 ]
+ReasoningSummary = Literal["auto", "concise", "detailed"]
 
 ErrorCode = Literal[
     "auth",
@@ -104,6 +105,7 @@ LiveServerEventType = Literal["audio", "text", "tool_call", "tool_call_delta", "
 ROLE_VALUES = frozenset(get_args(Role))
 FINISH_REASONS = frozenset(get_args(FinishReason))
 REASONING_EFFORTS = frozenset(get_args(ReasoningEffort))
+REASONING_SUMMARIES = frozenset(get_args(ReasoningSummary))
 BATCH_STATUSES = frozenset(get_args(BatchStatus))
 AUDIO_ENCODINGS = frozenset(get_args(AudioEncoding))
 TOOL_CHOICE_MODES = frozenset(get_args(ToolChoiceMode))
@@ -1361,6 +1363,10 @@ class Reasoning:
     together with effort="off" raises ValueError instead of silently
     discarding the budget.
 
+    summary asks providers that hide raw chain-of-thought (notably
+    OpenAI) to return a provider-generated reasoning summary when
+    supported. It does not request or expose private/raw reasoning.
+
     total_budget caps the combined output (thinking + response tokens).
     When set alongside Config.max_tokens, both limits are enforced:
     the response won't exceed max_tokens, and the total won't exceed
@@ -1378,17 +1384,22 @@ class Reasoning:
     effort: ReasoningEffort = "off"
     thinking_budget: int | None = None
     total_budget: int | None = None
+    summary: ReasoningSummary | None = None
 
     def __post_init__(self) -> None:
         if self.effort not in REASONING_EFFORTS:
             raise ValueError(f"unsupported reasoning effort: {self.effort}")
+        if self.summary is not None and self.summary not in REASONING_SUMMARIES:
+            raise ValueError(f"unsupported reasoning summary: {self.summary}")
         _validate_positive(self.thinking_budget, field_name="thinking_budget")
         _validate_positive(self.total_budget, field_name="total_budget")
         if self.effort == "off" and (
-            self.thinking_budget is not None or self.total_budget is not None
+            self.thinking_budget is not None
+            or self.total_budget is not None
+            or self.summary is not None
         ):
             raise ValueError(
-                "Reasoning(effort='off') cannot specify thinking_budget or total_budget"
+                "Reasoning(effort='off') cannot specify thinking_budget, total_budget, or summary"
             )
 
     @property
@@ -1540,6 +1551,11 @@ class Usage:
     providers may include reasoning, audio, cache, or future token classes in
     totals differently, so it is not forced to equal input + output.
 
+    ``reasoning_tokens`` is populated only when the provider reports an exact
+    separate reasoning/thinking token count. Some providers, notably Anthropic,
+    can return ``ThinkingPart`` content while reporting only combined
+    ``output_tokens``; in that case ``reasoning_tokens`` remains ``None``.
+
     When ``total_tokens`` is omitted, it defaults to ``input_tokens +
     output_tokens`` as a convenience for simple providers and tests.
     """
@@ -1631,15 +1647,15 @@ class Response:
         """Concatenated assistant text, when the response has text.
 
         ``Message.text`` is intentionally strict and only returns text for
-        pure-text messages.  For model responses, citation parts are metadata
-        attached to text rather than additional assistant content, so they do
-        not make ``Response.text`` unavailable.
+        pure-text messages.  For model responses, citation and thinking parts
+        are metadata around the visible answer, so they do not make
+        ``Response.text`` unavailable.
         """
         text = self.message.text
         if text is not None:
             return text
 
-        if all(isinstance(p, (TextPart, CitationPart)) for p in self.message.parts):
+        if all(isinstance(p, (TextPart, CitationPart, ThinkingPart)) for p in self.message.parts):
             text_parts = [p.text for p in self.message.parts if isinstance(p, TextPart)]
             if text_parts:
                 return "\n".join(text_parts)
@@ -2188,6 +2204,7 @@ def _check_literal_vocabularies() -> None:
         ("AudioEncoding", set(get_args(AudioEncoding)), set(AUDIO_ENCODINGS)),
         ("ToolChoiceMode", set(get_args(ToolChoiceMode)), set(TOOL_CHOICE_MODES)),
         ("ReasoningEffort", set(get_args(ReasoningEffort)), set(REASONING_EFFORTS)),
+        ("ReasoningSummary", set(get_args(ReasoningSummary)), set(REASONING_SUMMARIES)),
         ("LiveClientEventType", set(get_args(LiveClientEventType)), {_variant_type(cls) for cls in LIVE_CLIENT_EVENT_CLASSES}),
         ("LiveServerEventType", set(get_args(LiveServerEventType)), {_variant_type(cls) for cls in LIVE_SERVER_EVENT_CLASSES}),
     )
