@@ -76,12 +76,12 @@ class _AsyncConnection:
             r, _, _ = select.select([sock], [], [], 0)
             if not r:
                 return False
-            # Readable on an idle keepalive = EOF
-            peek = sock.recv(1, socket.MSG_PEEK)
-            if not peek:
-                return True
+            # Readable on an idle keepalive means EOF/close_notify or
+            # unexpected unread bytes, so the connection is not safe to reuse.
+            # Avoid MSG_PEEK: TLS sockets/proxies may reject non-zero recv()
+            # flags, and peeking is unnecessary once select() reports readable.
             return True
-        except OSError:
+        except (OSError, ValueError):
             return True
 
     def close(self) -> None:

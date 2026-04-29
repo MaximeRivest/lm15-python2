@@ -74,15 +74,14 @@ class _SyncConnection:
             r, _, _ = select.select([self.sock], [], [], 0)
             if not r:
                 return False
-            # Readable on idle socket = EOF pending
-            # Peek to verify (MSG_PEEK won't consume)
-            peek = self.sock.recv(1, socket.MSG_PEEK)
-            if not peek:
-                return True
-            # There are bytes; this shouldn't happen on an idle connection —
-            # treat as stale to be safe.
+            # Readable on an idle socket means the peer sent EOF/close_notify,
+            # or that unexpected bytes were left unread.  Either way this
+            # connection is not safe to reuse.  Do not probe with MSG_PEEK here:
+            # ssl.SSLSocket.recv(..., flags) raises ValueError for non-zero
+            # flags, and peeking is unnecessary once select() says an idle
+            # socket is readable.
             return True
-        except OSError:
+        except (OSError, ValueError):
             return True
 
     def close(self) -> None:

@@ -7,6 +7,9 @@ from typing import Iterator
 from lm15.providers import AnthropicLM, GeminiLM, OpenAILM
 from lm15.transports import StdlibTransport
 from lm15.types import (
+    BuiltinTool,
+    CitationDelta,
+    CitationPart,
     Config,
     FunctionTool,
     Message,
@@ -15,6 +18,7 @@ from lm15.types import (
     StreamEndEvent,
     StreamStartEvent,
     TextDelta,
+    TextPart,
     ToolCallPart,
 )
 
@@ -92,6 +96,25 @@ def test_openai_builds_responses_request_with_new_types() -> None:
     assert payload["store"] is False
 
 
+def test_openai_builds_assistant_history_with_output_text_parts() -> None:
+    lm = OpenAILM(api_key="sk-test", transport=_FakeTransport(), base_url="https://example.test/v1")
+    request = Request(
+        model="gpt-test",
+        messages=(
+            Message.user("What is 2 + 2? Reply with one word."),
+            Message.assistant("four"),
+            Message.user("Repeat your previous answer in uppercase."),
+        ),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["input"][1] == {
+        "role": "assistant",
+        "content": [{"type": "output_text", "text": "four"}],
+    }
+
+
 def test_openai_complete_parses_tool_call_response() -> None:
     body = json.dumps(
         {
@@ -120,6 +143,97 @@ def test_openai_complete_parses_tool_call_response() -> None:
     assert tool_call.input == {"query": "weather"}
     assert response.finish_reason == "tool_call"
     assert response.usage.total_tokens == 7
+
+
+def test_openai_complete_parses_web_search_citations() -> None:
+    answer = "Python 3.14.4 is the latest stable release. ([Python.org](https://www.python.org/downloads/))"
+    citation_start = answer.index("([Python.org]")
+    body = json.dumps(
+        {
+            "id": "resp_1",
+            "model": "gpt-test",
+            "status": "completed",
+            "output": [
+                {
+                    "id": "ws_1",
+                    "type": "web_search_call",
+                    "status": "completed",
+                    "action": {"type": "search", "query": "latest stable Python release"},
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": answer,
+                            "annotations": [
+                                {
+                                    "type": "url_citation",
+                                    "start_index": citation_start,
+                                    "end_index": len(answer),
+                                    "title": "Download Python | Python.org",
+                                    "url": "https://www.python.org/downloads/",
+                                }
+                            ],
+                        }
+                    ],
+                },
+            ],
+            "usage": {"input_tokens": 3, "output_tokens": 4, "total_tokens": 7},
+        }
+    ).encode()
+    transport = _FakeTransport([_FakeResponse(200, body)])
+    lm = OpenAILM(api_key="sk-test", transport=transport)
+
+    response = lm.complete(
+        Request(
+            model="gpt-test",
+            messages=(Message.user("What is the latest Python release?"),),
+            tools=(BuiltinTool("web_search"),),
+        )
+    )
+
+    assert response.message.parts_of(TextPart) == [TextPart(answer)]
+    citations = response.message.parts_of(CitationPart)
+    assert citations == [
+        CitationPart(
+            url="https://www.python.org/downloads/",
+            title="Download Python | Python.org",
+            text=answer[citation_start:],
+        )
+    ]
+    # OpenAI builtin tool calls are provider-executed and completed; they are
+    # kept in provider_data, not surfaced as app-actionable function calls.
+    assert response.tool_calls == []
+    assert response.finish_reason == "stop"
+
+
+def test_openai_stream_parses_output_text_annotations() -> None:
+    lm = OpenAILM(api_key="sk-test", transport=_FakeTransport())
+    request = Request(model="gpt-test", messages=(Message.user("Hi"),))
+    raw = type("Raw", (), {})()
+    raw.data = json.dumps(
+        {
+            "type": "response.output_text.annotation.added",
+            "output_index": 0,
+            "annotation": {
+                "type": "url_citation",
+                "title": "Example",
+                "url": "https://example.com",
+                "text": "Example cited text",
+            },
+        }
+    )
+
+    parsed = lm.parse_stream_event(request, raw)
+
+    assert isinstance(parsed, StreamDeltaEvent)
+    assert parsed.delta == CitationDelta(
+        title="Example",
+        url="https://example.com",
+        text="Example cited text",
+        part_index=0,
+    )
 
 
 def test_provider_stream_splits_arbitrary_sse_chunks() -> None:

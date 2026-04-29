@@ -157,6 +157,26 @@ def test_message_filters_power_response_helpers() -> None:
     assert not hasattr(response, "image")
 
 
+def test_response_text_allows_citation_metadata() -> None:
+    citation = CitationPart(url="https://example.com", title="Example")
+    message = Message.assistant([TextPart("hello"), citation])
+    response = Response(
+        id="r1",
+        model="m",
+        message=message,
+        finish_reason="stop",
+        usage=Usage(),
+    )
+
+    rendered = repr(response)
+
+    assert message.text is None
+    assert response.text == "hello"
+    assert response.citations == [citation]
+    assert "text='hello'" in rendered
+    assert "CitationPart" in rendered
+
+
 def test_response_json_requires_exact_json() -> None:
     response = Response(
         id="r1",
@@ -279,10 +299,15 @@ def test_json_fields_are_validated() -> None:
 
 def test_sequence_inputs_are_normalized_to_tuples() -> None:
     msg = Message.user((TextPart("a"), TextPart("b")))
+    mixed_msg = Message.user(("caption", ImagePart(url="https://example.com/cat.png")))
     choice = ToolChoice(allowed=["lookup"])  # type: ignore[arg-type]
     config = Config(stop="END")  # type: ignore[arg-type]
 
     assert msg.parts == (TextPart("a"), TextPart("b"))
+    assert mixed_msg.parts == (
+        TextPart("caption"),
+        ImagePart(url="https://example.com/cat.png"),
+    )
     assert choice.allowed == ("lookup",)
     assert config.stop == ("END",)
 

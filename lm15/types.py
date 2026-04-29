@@ -614,7 +614,7 @@ ProviderData: TypeAlias = JsonObject
 ToolResultContentPart: TypeAlias = (
     TextPart | ImagePart | AudioPart | VideoPart | DocumentPart | BinaryPart | CitationPart
 )
-ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[ToolResultContentPart]
+ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[str | ToolResultContentPart]
 
 # Parts allowed in prompts (user/developer messages and system content).
 # Excludes model/tool protocol parts which are produced by the model or
@@ -622,7 +622,7 @@ ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[ToolResult
 PromptPart: TypeAlias = (
     TextPart | ImagePart | AudioPart | VideoPart | DocumentPart | BinaryPart
 )
-PromptContent: TypeAlias = str | PromptPart | Sequence[PromptPart]
+PromptContent: TypeAlias = str | PromptPart | Sequence[str | PromptPart]
 SystemContent: TypeAlias = PromptContent
 
 # Parts allowed in assistant messages.  This intentionally includes
@@ -640,11 +640,11 @@ AssistantPart: TypeAlias = (
     | RefusalPart
     | CitationPart
 )
-AssistantContent: TypeAlias = str | AssistantPart | Sequence[AssistantPart]
+AssistantContent: TypeAlias = str | AssistantPart | Sequence[str | AssistantPart]
 
 # Broad content alias used internally by the normalizer; role-specific
 # constructors expose narrower aliases above.
-PartInput: TypeAlias = str | Part | Sequence[Part]
+PartInput: TypeAlias = str | Part | Sequence[str | Part]
 
 # Parts forbidden in prompts (user/developer messages and system content).
 # Defined once and reused by every prompt-side validator.
@@ -977,12 +977,18 @@ def _normalize_parts(content: PartInput) -> tuple[Part, ...]:
     if _is_part(content):
         return (content,)
     if isinstance(content, Sequence):
-        parts = tuple(content)
-        if not parts:
+        raw_parts = tuple(content)
+        if not raw_parts:
             raise ValueError("content sequence cannot be empty")
-        if not all(_is_part(p) for p in parts):
-            raise TypeError("content sequence must contain Part objects")
-        return parts
+        parts: list[Part] = []
+        for part in raw_parts:
+            if isinstance(part, str):
+                parts.append(TextPart(text=part))
+            elif _is_part(part):
+                parts.append(part)
+            else:
+                raise TypeError("content sequence must contain strings or Part objects")
+        return tuple(parts)
     raise TypeError("content must be a string, Part, or sequence of Parts")
 
 
@@ -1600,10 +1606,6 @@ class Response:
     def __repr__(self) -> str:
         display_text = self.text
         citations = self.citations
-        if display_text is None and citations:
-            text_parts = [p.text for p in self.message.parts if isinstance(p, TextPart)]
-            if text_parts and all(isinstance(p, (TextPart, CitationPart)) for p in self.message.parts):
-                display_text = "\n".join(text_parts)
 
         fields = [
             ("text", repr(display_text)) if display_text is not None else ("message", repr(self.message)),
@@ -1626,7 +1628,22 @@ class Response:
 
     @property
     def text(self) -> str | None:
-        return self.message.text
+        """Concatenated assistant text, when the response has text.
+
+        ``Message.text`` is intentionally strict and only returns text for
+        pure-text messages.  For model responses, citation parts are metadata
+        attached to text rather than additional assistant content, so they do
+        not make ``Response.text`` unavailable.
+        """
+        text = self.message.text
+        if text is not None:
+            return text
+
+        if all(isinstance(p, (TextPart, CitationPart)) for p in self.message.parts):
+            text_parts = [p.text for p in self.message.parts if isinstance(p, TextPart)]
+            if text_parts:
+                return "\n".join(text_parts)
+        return None
 
     @property
     def tool_calls(self) -> list[ToolCallPart]:

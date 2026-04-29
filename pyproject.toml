@@ -7,6 +7,9 @@ requires-python = ">=3.10"
 protobuf = ["protobuf>=5"]
 live = ["websockets>=12"]
 
+[tool.setuptools.packages.find]
+include = ["lm15*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
