@@ -706,7 +706,7 @@ def _request_to_proto(pb, request: Request):
 
 def _response_to_proto(pb, response: Response):
     out = pb.Response(
-        id=response.id,
+        id=response.id or "",
         model=response.model,
         finish_reason=_maps(pb)["finish"][0][response.finish_reason],
     )
@@ -1005,7 +1005,7 @@ def _request_from_proto(pb, msg):
 
 def _response_from_proto(pb, msg):
     return Response(
-        id=msg.id,
+        id=msg.id or None,
         model=msg.model,
         message=_message_from_proto(pb, msg.message),
         finish_reason=_maps(pb)["finish"][1][msg.finish_reason],

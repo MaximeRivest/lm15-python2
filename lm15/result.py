@@ -23,30 +23,40 @@ automatic retry.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Iterator
 
 from .errors import RETRYABLE_ERRORS, error_class_for_code
 from .types import (
+    AudioDelta,
     AudioPart,
+    CitationDelta,
     CitationPart,
-    Delta,
+    DocumentPart,
     ErrorDetail,
+    ImageDelta,
     ImagePart,
+    JsonObject,
     Message,
+    PART_CLASSES,
     Part,
     Request,
     Response,
     StreamEvent,
+    TextDelta,
     TextPart,
+    ThinkingDelta,
     ThinkingPart,
+    ToolCallDelta,
     ToolCallInfo,
     ToolCallPart,
-    ToolResultPart,
+    ToolRegistry,
     Usage,
-    text,
+    VideoPart,
     tool_result,
 )
 
@@ -59,7 +69,7 @@ class StreamChunk:
     type: str
     text: str | None = None
     name: str | None = None
-    input: dict | None = None
+    input: JsonObject | None = None
     image: ImagePart | None = None
     audio: AudioPart | None = None
     response: Response | None = None
@@ -80,12 +90,12 @@ class _RoundState:
     started_model: str | None = None
     finish_reason: str | None = None
     usage: Usage | None = None
-    text_parts: list[str] = field(default_factory=list)
-    thinking_parts: list[str] = field(default_factory=list)
-    audio_chunks: list[str] = field(default_factory=list)
-    audio_parts: list[AudioPart] = field(default_factory=list)
-    image_parts: list[ImagePart] = field(default_factory=list)
-    citation_parts: list[CitationPart] = field(default_factory=list)
+    text_parts: dict[int, list[str]] = field(default_factory=dict)
+    thinking_parts: dict[int, list[str]] = field(default_factory=dict)
+    audio_chunks: dict[int, list[str]] = field(default_factory=dict)
+    audio_media_types: dict[int, str | None] = field(default_factory=dict)
+    image_parts: dict[int, ImagePart] = field(default_factory=dict)
+    citation_parts: dict[int, list[CitationPart]] = field(default_factory=dict)
     tool_call_raw: dict[int, str] = field(default_factory=dict)
     tool_call_meta: dict[int, dict[str, Any]] = field(default_factory=dict)
     provider_data: dict[str, Any] | None = None
@@ -113,17 +123,18 @@ class _RoundState:
 
         if delta.type == "text":
             t = delta.text or ""
-            self.text_parts.append(t)
+            self.text_parts.setdefault(delta.part_index, []).append(t)
             chunks.append(StreamChunk(type="text", text=t))
 
         elif delta.type == "thinking":
             t = delta.text or ""
-            self.thinking_parts.append(t)
+            self.thinking_parts.setdefault(delta.part_index, []).append(t)
             chunks.append(StreamChunk(type="thinking", text=t))
 
         elif delta.type == "audio":
             data = delta.data or ""
-            self.audio_chunks.append(data)
+            self.audio_chunks.setdefault(delta.part_index, []).append(data)
+            self.audio_media_types.setdefault(delta.part_index, delta.media_type)
             from .types import audio as make_audio
             chunks.append(StreamChunk(type="audio", audio=make_audio(data=data)))
 
@@ -134,14 +145,9 @@ class _RoundState:
                 meta["id"] = str(delta.id)
             if delta.name is not None:
                 meta["name"] = str(delta.name)
-            raw_input = delta.input or ""
-            if isinstance(raw_input, dict):
-                meta["input"] = raw_input
-            else:
-                chunk_str = str(raw_input)
-                aggregate = self.tool_call_raw.get(idx, "") + chunk_str
-                self.tool_call_raw[idx] = aggregate
-                meta["input"] = _parse_json_best_effort(aggregate)
+            aggregate = self.tool_call_raw.get(idx, "") + delta.input
+            self.tool_call_raw[idx] = aggregate
+            meta["input"] = _parse_json_best_effort(aggregate)
 
         elif delta.type == "image":
             mt = delta.media_type or "image/png"
@@ -149,13 +155,15 @@ class _RoundState:
                 part = ImagePart(media_type=mt, data=str(delta.data))
             elif delta.url is not None:
                 part = ImagePart(media_type=mt, url=str(delta.url))
+            elif delta.file_id is not None:
+                part = ImagePart(media_type=mt, file_id=str(delta.file_id))
             else:
                 return chunks
-            self.image_parts.append(part)
+            self.image_parts[delta.part_index] = part
             chunks.append(StreamChunk(type="image", image=part))
 
         elif delta.type == "citation":
-            self.citation_parts.append(CitationPart(
+            self.citation_parts.setdefault(delta.part_index, []).append(CitationPart(
                 text=delta.text, url=delta.url, title=delta.title,
             ))
 
@@ -165,38 +173,48 @@ class _RoundState:
         """Build a complete Response from accumulated state."""
         parts: list[Part] = []
 
-        if self.thinking_parts:
-            parts.append(ThinkingPart(text="".join(self.thinking_parts)))
-        if self.text_parts:
-            parts.append(TextPart(text="".join(self.text_parts)))
-
-        parts.extend(self.image_parts)
-
-        if self.audio_chunks and not self.audio_parts:
-            pcm_data = _concat_b64_chunks(self.audio_chunks)
-            wav_data = _pcm_to_wav(pcm_data)
-            from .types import audio as make_audio
-            parts.append(make_audio(data=wav_data, media_type="audio/wav"))
-        parts.extend(self.audio_parts)
-        parts.extend(self.citation_parts)
-
-        # Assemble tool calls
         tool_names = [t.name for t in self.request.tools if t.type == "function"]
-        for pos, idx in enumerate(sorted(self.tool_call_meta)):
-            meta = self.tool_call_meta[idx]
-            payload = meta.get("input")
-            if not isinstance(payload, dict):
-                payload = _parse_json_best_effort(self.tool_call_raw.get(idx, ""))
-            tc_name = meta.get("name")
-            if not tc_name:
-                if len(tool_names) == 1:
-                    tc_name = tool_names[0]
-                elif pos < len(tool_names):
-                    tc_name = tool_names[pos]
+        part_indexes = sorted(
+            set(self.thinking_parts)
+            | set(self.text_parts)
+            | set(self.image_parts)
+            | set(self.audio_chunks)
+            | set(self.citation_parts)
+            | set(self.tool_call_meta)
+        )
+
+        for pos, idx in enumerate(part_indexes):
+            if idx in self.thinking_parts:
+                parts.append(ThinkingPart(text="".join(self.thinking_parts[idx])))
+            if idx in self.text_parts:
+                parts.append(TextPart(text="".join(self.text_parts[idx])))
+            if idx in self.image_parts:
+                parts.append(self.image_parts[idx])
+            if idx in self.audio_chunks:
+                raw_data = _concat_b64_chunks(self.audio_chunks[idx])
+                media_type = self.audio_media_types.get(idx)
+                from .types import audio as make_audio
+                if media_type in (None, "audio/pcm", "audio/pcm16"):
+                    parts.append(make_audio(data=_pcm_to_wav(raw_data), media_type="audio/wav"))
                 else:
-                    tc_name = "tool"
-            tc_id = str(meta.get("id") or f"tool_call_{idx}")
-            parts.append(ToolCallPart(id=tc_id, name=str(tc_name), input=payload))
+                    parts.append(make_audio(data=raw_data, media_type=media_type))
+            if idx in self.citation_parts:
+                parts.extend(self.citation_parts[idx])
+            if idx in self.tool_call_meta:
+                meta = self.tool_call_meta[idx]
+                payload = meta.get("input")
+                if not isinstance(payload, dict):
+                    payload = _parse_json_best_effort(self.tool_call_raw.get(idx, ""))
+                tc_name = meta.get("name")
+                if not tc_name:
+                    if len(tool_names) == 1:
+                        tc_name = tool_names[0]
+                    elif pos < len(tool_names):
+                        tc_name = tool_names[pos]
+                    else:
+                        tc_name = "tool"
+                tc_id = str(meta.get("id") or f"tool_call_{idx}")
+                parts.append(ToolCallPart(id=tc_id, name=str(tc_name), input=payload))
 
         if not parts:
             parts = [TextPart(text="")]
@@ -209,7 +227,7 @@ class _RoundState:
             finish = "tool_call"
 
         return Response(
-            id=self.started_id or "",
+            id=self.started_id,
             model=self.started_model or self.request.model,
             message=Message(role="assistant", parts=tuple(parts)),
             finish_reason=finish,
@@ -228,7 +246,7 @@ class Result:
         request: Request,
         start_stream: Callable[[Request], Iterator[StreamEvent]] | None = None,
         on_finished: Callable[[Request, Response], None] | None = None,
-        callable_registry: dict[str, Callable[..., Any]] | None = None,
+        callable_registry: ToolRegistry | None = None,
         on_tool_call: Callable[[ToolCallInfo], Any] | None = None,
         max_tool_rounds: int = 8,
         retries: int = 0,
@@ -287,6 +305,22 @@ class Result:
         return self.response.audio
 
     @property
+    def video(self) -> VideoPart | None:
+        return self.response.video
+
+    @property
+    def videos(self) -> list[VideoPart]:
+        return self.response.videos
+
+    @property
+    def document(self) -> DocumentPart | None:
+        return self.response.document
+
+    @property
+    def documents(self) -> list[DocumentPart]:
+        return self.response.documents
+
+    @property
     def citations(self) -> list[CitationPart]:
         return self.response.citations
 
@@ -313,6 +347,14 @@ class Result:
     @property
     def audio_bytes(self) -> bytes:
         return self.response.audio_bytes
+
+    @property
+    def video_bytes(self) -> bytes:
+        return self.response.video_bytes
+
+    @property
+    def document_bytes(self) -> bytes:
+        return self.response.document_bytes
 
     @property
     def response(self) -> Response:
@@ -345,7 +387,10 @@ class Result:
                     emitted_visible = False
                     round_response = None
                     try:
-                        events = self._open_stream(current_request, use_initial_events=use_initial_events)
+                        events = self._open_stream(
+                            current_request,
+                            use_initial_events=use_initial_events,
+                        )
                         use_initial_events = False
                         for event in events:
                             if event.type == "error":
@@ -396,11 +441,22 @@ class Result:
 
                     if executed and not unanswered:
                         for outcome in executed:
-                            yield StreamChunk(type="tool_result", text=outcome.preview, name=outcome.name)
-                        tool_message = Message(role="tool", parts=tuple(item.part for item in executed))
+                            yield StreamChunk(
+                                type="tool_result",
+                                text=outcome.preview,
+                                name=outcome.name,
+                            )
+                        tool_message = Message(
+                            role="tool",
+                            parts=tuple(item.part for item in executed),
+                        )
+                        messages = current_request.messages + (
+                            round_response.message,
+                            tool_message,
+                        )
                         current_request = Request(
                             model=current_request.model,
-                            messages=current_request.messages + (round_response.message, tool_message),
+                            messages=messages,
                             system=current_request.system,
                             tools=current_request.tools,
                             config=current_request.config,
@@ -535,34 +591,87 @@ class AsyncResult:
 # ─── Conversion utilities ────────────────────────────────────────────
 
 def response_to_events(response: Response) -> Iterator[StreamEvent]:
-    """Convert a complete Response to a stream of events."""
+    """Convert a complete Response to stream events.
+
+    The conversion is intentionally lossless for the Delta vocabulary.  If a
+    response contains a valid Part that has no Delta representation, this
+    function raises instead of silently dropping content.
+    """
     yield StreamEvent(type="start", id=response.id, model=response.model)
     for idx, part in enumerate(response.message.parts):
         if isinstance(part, TextPart):
-            yield StreamEvent(type="delta", delta=Delta(type="text", part_index=idx, text=part.text))
+            yield StreamEvent(
+                type="delta",
+                delta=TextDelta(text=part.text, part_index=idx),
+            )
         elif isinstance(part, ThinkingPart):
-            yield StreamEvent(type="delta", delta=Delta(type="thinking", part_index=idx, text=part.text))
+            yield StreamEvent(
+                type="delta",
+                delta=ThinkingDelta(text=part.text, part_index=idx),
+            )
         elif isinstance(part, ToolCallPart):
             yield StreamEvent(
                 type="delta",
-                delta=Delta(type="tool_call", part_index=idx, id=part.id, name=part.name, input=json.dumps(part.input)),
+                delta=ToolCallDelta(
+                    input=json.dumps(part.input),
+                    part_index=idx,
+                    id=part.id,
+                    name=part.name,
+                ),
             )
         elif isinstance(part, ImagePart):
-            yield StreamEvent(type="delta", delta=Delta(
-                type="image", part_index=idx,
-                data=part.data, url=part.url, media_type=part.media_type,
-            ))
+            yield StreamEvent(
+                type="delta",
+                delta=ImageDelta(
+                    part_index=idx,
+                    data=part.data,
+                    url=part.url,
+                    file_id=part.file_id,
+                    media_type=part.media_type,
+                ),
+            )
         elif isinstance(part, AudioPart):
-            if part.data:
-                yield StreamEvent(type="delta", delta=Delta(type="audio", part_index=idx, data=part.data))
+            if part.data is None:
+                _raise_non_streamable_part(
+                    part,
+                    reason="AudioDelta only supports inline data",
+                )
+            yield StreamEvent(
+                type="delta",
+                delta=AudioDelta(
+                    data=part.data,
+                    part_index=idx,
+                    media_type=part.media_type,
+                ),
+            )
         elif isinstance(part, CitationPart):
-            yield StreamEvent(type="delta", delta=Delta(type="citation", part_index=idx, text=part.text, url=part.url, title=part.title))
-    yield StreamEvent(type="end", finish_reason=response.finish_reason, usage=response.usage, provider_data=response.provider_data)
+            yield StreamEvent(
+                type="delta",
+                delta=CitationDelta(
+                    text=part.text,
+                    url=part.url,
+                    title=part.title,
+                    part_index=idx,
+                ),
+            )
+        else:
+            _raise_non_streamable_part(part)
+    yield StreamEvent(
+        type="end",
+        finish_reason=response.finish_reason,
+        usage=response.usage,
+        provider_data=response.provider_data,
+    )
 
 
 def materialize_response(events: Iterator[StreamEvent], request: Request) -> Response:
     """Consume stream events and build a complete Response."""
     return Result(events=events, request=request).response
+
+
+def _raise_non_streamable_part(part: Part, *, reason: str | None = None) -> None:
+    detail = reason or f"no {part.type!r} Delta variant exists"
+    raise TypeError(f"Cannot convert {type(part).__name__} to StreamEvent: {detail}")
 
 
 # ─── Internal helpers ────────────────────────────────────────────────
@@ -610,24 +719,29 @@ def _pcm_to_wav(pcm: bytes, sample_rate: int = 24000, channels: int = 1, bits: i
     return header + pcm
 
 
-def _parse_json_best_effort(raw: str | None) -> dict[str, Any]:
+def _parse_json_best_effort(raw: str | None) -> JsonObject:
     if not raw:
         return {}
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, parse_constant=_reject_json_constant)
         return value if isinstance(value, dict) else {"value": value}
     except Exception:
         return {"partial_json": raw}
 
 
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-standard JSON constant: {value}")
+
+
 def _normalize_tool_output(value: Any) -> list[Part]:
-    if isinstance(value, TextPart):
+    if isinstance(value, str):
+        return [TextPart(text=value)]
+    if isinstance(value, PART_CLASSES):
         return [value]
-    if isinstance(value, list) and all(isinstance(x, (TextPart, ImagePart, AudioPart)) for x in value):
-        return list(value)
-    # Check for any Part type via .type attribute
-    if hasattr(value, "type") and hasattr(value, "__dataclass_fields__"):
-        return [value]
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        parts = list(value)
+        if all(isinstance(part, PART_CLASSES) for part in parts):
+            return parts
     return [TextPart(text=str(value))]
 
 
@@ -636,8 +750,18 @@ def _preview_parts(parts: list[Part]) -> str | None:
     return "\n".join(texts) or None
 
 
-def _invoke_tool(fn: Callable[..., Any], payload: dict[str, Any]) -> Any:
+def _invoke_tool(fn: Callable[..., Any], payload: JsonObject) -> Any:
     try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
         return fn(**payload)
-    except TypeError:
+
+    try:
+        sig.bind(**payload)
+    except TypeError as kwargs_error:
+        try:
+            sig.bind(payload)
+        except TypeError:
+            raise kwargs_error
         return fn(payload)
+    return fn(**payload)

@@ -275,8 +275,13 @@ def reasoning_to_dict(r: Reasoning) -> dict[str, Any]:
 
 def reasoning_from_dict(d: dict[str, Any]) -> Reasoning:
     default_effort = "off" if d.get("enabled") is False else "medium"
+    effort = d.get("effort", default_effort)
+    # Legacy payloads could combine enabled=false with a budget.  In the
+    # current type system, off reasoning has no budgets, so discard them.
+    if effort == "off":
+        return Reasoning(effort="off")
     return Reasoning(
-        effort=d.get("effort", default_effort),
+        effort=effort,
         thinking_budget=d.get("thinking_budget", d.get("budget")),
         total_budget=d.get("total_budget"),
     )
@@ -333,7 +338,7 @@ def error_detail_from_dict(d: dict[str, Any]) -> ErrorDetail:
 def delta_to_dict(d: Delta) -> dict[str, Any]:
     out: dict[str, Any] = {
         "type": d.type,
-        "part_index": d.part_index if d.part_index else None,
+        "part_index": d.part_index,
     }
 
     if isinstance(d, (TextDelta, ThinkingDelta)):
@@ -506,7 +511,7 @@ def response_to_dict(r: Response, *, include_provider_data: bool = False) -> dic
 
 def response_from_dict(d: dict[str, Any]) -> Response:
     return Response(
-        id=d.get("id", ""),
+        id=d.get("id"),
         model=d["model"],
         message=message_from_dict(d["message"]),
         finish_reason=d["finish_reason"],
@@ -600,6 +605,7 @@ def live_server_event_to_dict(e: LiveServerEvent) -> dict[str, Any]:
         "id": e.id,
         "name": e.name,
         "input": e.input,
+        "input_delta": e.input_delta,
         "usage": usage_to_dict(e.usage) if e.usage else None,
         "error": error_detail_to_dict(e.error) if e.error else None,
     })
@@ -613,6 +619,7 @@ def live_server_event_from_dict(d: dict[str, Any]) -> LiveServerEvent:
         id=d.get("id"),
         name=d.get("name"),
         input=d.get("input"),
+        input_delta=d.get("input_delta"),
         usage=usage_from_dict(d["usage"]) if isinstance(d.get("usage"), dict) else None,
         error=error_detail_from_dict(d["error"]) if isinstance(d.get("error"), dict) else None,
     )

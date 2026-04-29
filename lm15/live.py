@@ -9,17 +9,22 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
 import threading
 from collections import deque
+from collections.abc import Sequence
 from typing import Any, Callable, Deque
 
 from .types import (
+    JsonObject,
     LiveClientEvent,
     LiveServerEvent,
+    PART_CLASSES,
     Part,
     TextPart,
     ToolCallInfo,
+    ToolRegistry,
 )
 
 EncodeEventFn = Callable[[LiveClientEvent], list[dict[str, Any]]]
@@ -48,7 +53,7 @@ class WebSocketLiveSession:
         ws: Any,
         encode_event: EncodeEventFn,
         decode_event: DecodeEventFn,
-        callable_registry: dict[str, Callable[..., Any]] | None = None,
+        callable_registry: ToolRegistry | None = None,
         on_tool_call: Callable[[ToolCallInfo], Any] | None = None,
     ) -> None:
         self._ws = ws
@@ -78,7 +83,8 @@ class WebSocketLiveSession:
             raise RuntimeError("live session is closed")
 
         if event is not None:
-            if any(x is not None for x in (audio, video, text, tool_result)) or interrupt or end_audio:
+            has_payload = any(x is not None for x in (audio, video, text, tool_result))
+            if has_payload or interrupt or end_audio:
                 raise ValueError("pass either `event` or keyword payload, not both")
             events = [event]
         else:
@@ -158,7 +164,9 @@ class WebSocketLiveSession:
         if tool_result:
             for call_id, value in tool_result.items():
                 content = tuple(_tool_result_parts(value))
-                events.append(LiveClientEvent(type="tool_result", id=call_id, content=content))
+                events.append(
+                    LiveClientEvent(type="tool_result", id=call_id, content=content)
+                )
 
         if interrupt:
             events.append(LiveClientEvent(type="interrupt"))
@@ -173,7 +181,11 @@ class WebSocketLiveSession:
         if event.type != "tool_call" or not event.id:
             return
 
-        info = ToolCallInfo(id=event.id, name=event.name or "tool", input=event.input or {})
+        info = ToolCallInfo(
+            id=event.id,
+            name=event.name or "tool",
+            input=event.input or {},
+        )
 
         result: Any | None = None
         if self._on_tool_call is not None:
@@ -224,21 +236,32 @@ class AsyncLiveSession:
 
 
 def _tool_result_parts(value: Any) -> list[Part]:
-    if isinstance(value, TextPart):
+    if isinstance(value, str):
+        return [TextPart(text=value)]
+    if isinstance(value, PART_CLASSES):
         return [value]
-    if isinstance(value, list) and all(isinstance(x, TextPart) for x in value):
-        return list(value)
-    # Check for any Part type
-    if hasattr(value, "type") and hasattr(value, "__dataclass_fields__"):
-        return [value]
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        parts = list(value)
+        if all(isinstance(part, PART_CLASSES) for part in parts):
+            return parts
     return [TextPart(text=str(value))]
 
 
-def _invoke_tool(fn: Callable[..., Any], payload: dict[str, Any]) -> Any:
+def _invoke_tool(fn: Callable[..., Any], payload: JsonObject) -> Any:
     try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
         return fn(**payload)
-    except TypeError:
+
+    try:
+        sig.bind(**payload)
+    except TypeError as kwargs_error:
+        try:
+            sig.bind(payload)
+        except TypeError:
+            raise kwargs_error
         return fn(payload)
+    return fn(**payload)
 
 
 def _to_base64_str(data: bytes | str) -> str:

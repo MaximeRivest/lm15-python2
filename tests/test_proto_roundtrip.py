@@ -1079,7 +1079,7 @@ def test_endpoint_request_response_roundtrips_cover_auxiliary_endpoints(pb) -> N
             EmbeddingResponse(
                 model="embed",
                 vectors=((1.0, 2.0), (3.0,)),
-                usage=Usage(total_tokens=3),
+                usage=Usage(input_tokens=2, output_tokens=1, total_tokens=3),
                 provider_data={"native": "ok"},
             ),
             _embedding_response_to_proto,
@@ -1150,7 +1150,10 @@ def test_live_config_and_events_roundtrip(pb) -> None:
         LiveServerEvent(type="text", text="hello"),
         LiveServerEvent(type="tool_call", id="call_1", name="lookup", input={"q": "x"}),
         LiveServerEvent(type="interrupted"),
-        LiveServerEvent(type="turn_end", usage=Usage(total_tokens=9)),
+        LiveServerEvent(
+            type="turn_end",
+            usage=Usage(input_tokens=4, output_tokens=5, total_tokens=9),
+        ),
         LiveServerEvent(type="error", error=ErrorDetail(code="provider", message="bad")),
     ]
     for event in server_events:
