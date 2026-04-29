@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from os import PathLike
 from types import NoneType, UnionType
 from typing import Any, Callable, Literal, TypeAlias, TypeVar, Union, get_args, get_origin
 
@@ -110,6 +111,10 @@ class _FrozenJsonObject(dict[str, JsonValue]):
 
     __slots__ = ()
 
+    def unwrap(self) -> JsonObject:
+        """Return a mutable deep copy using plain JSON containers."""
+        return _thaw_json_value(self)  # type: ignore[return-value]
+
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("JSON objects on lm15 types are immutable")
 
@@ -127,6 +132,10 @@ class _FrozenJsonArray(list[JsonValue]):
     """A JSON array that remains list-compatible but cannot be mutated."""
 
     __slots__ = ()
+
+    def unwrap(self) -> JsonArray:
+        """Return a mutable deep copy using plain JSON containers."""
+        return _thaw_json_value(self)  # type: ignore[return-value]
 
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("JSON arrays on lm15 types are immutable")
@@ -178,6 +187,15 @@ def _freeze_json_value(value: JsonValue) -> JsonValue:
     return value
 
 
+def _thaw_json_value(value: JsonValue) -> JsonValue:
+    """Recursively copy frozen JSON containers into mutable JSON containers."""
+    if isinstance(value, dict):
+        return {key: _thaw_json_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_thaw_json_value(item) for item in value]
+    return value
+
+
 def _freeze_json_object(
     value: Any, *, field_name: str, required: bool
 ) -> JsonObject | None:
@@ -197,6 +215,17 @@ def _freeze_required_json_object(value: Any, *, field_name: str) -> JsonObject:
 
 def _freeze_optional_json_object(value: Any, *, field_name: str) -> JsonObject | None:
     return _freeze_json_object(value, field_name=field_name, required=False)
+
+
+def _freeze_field(obj: object, field_name: str, *, required: bool = False) -> None:
+    """Freeze a JSON object field in-place on a frozen dataclass."""
+    object.__setattr__(
+        obj,
+        field_name,
+        _freeze_json_object(
+            getattr(obj, field_name), field_name=field_name, required=required
+        ),
+    )
 
 
 def _validate_json_object(value: Any, *, field_name: str) -> None:
@@ -263,28 +292,58 @@ def _decode_data(part_type: str, data: str | None) -> bytes:
         raise ValueError(
             f"{part_type} has no inline data; fetch url/file_id-addressed media before decoding"
         )
+    if isinstance(data, str) and data.startswith("data:") and ";base64," in data:
+        data = data.split(";base64,", 1)[1]
     import base64
 
     return base64.b64decode(data, validate=True)
 
 
+def _base64_summary(data: str | None) -> str | None:
+    """Return a short repr-safe summary for base64 data."""
+    if data is None:
+        return None
+    payload = (
+        data.split(";base64,", 1)[1]
+        if data.startswith("data:") and ";base64," in data
+        else data
+    )
+    return f"<base64: {len(payload)} chars>"
+
+
+def _bytes_summary(data: bytes | bytearray) -> str:
+    """Return a short repr-safe summary for raw bytes."""
+    return f"<bytes: {len(data)} bytes>"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class _MediaMixin:
-    """Shared validation and byte access for inline-capable media parts."""
+    """Shared fields, validation, repr, and byte access for media parts."""
 
-    __slots__ = ()
-
-    type: str
     media_type: str
-    data: str | None
-    url: str | None
-    file_id: str | None
+    data: str | None = None
+    url: str | None = None
+    file_id: str | None = None
 
     def __post_init__(self) -> None:
-        if not self.media_type:
+        if not isinstance(self.media_type, str) or self.media_type == "":
             raise ValueError(f"{self.__class__.__name__} requires media_type")
         _validate_media(self.__class__.__name__, self.data, self.url, self.file_id)
         if self.data is not None:
             _decode_data(self.__class__.__name__, self.data)
+
+    def __repr__(self) -> str:
+        fields = [
+            ("media_type", self.media_type),
+            ("data", _base64_summary(self.data)),
+            ("url", self.url),
+            ("file_id", self.file_id),
+        ]
+        detail = getattr(self, "detail", None)
+        if detail is not None:
+            fields.append(("detail", detail))
+        args = ", ".join(f"{name}={value!r}" for name, value in fields)
+        return f"{self.__class__.__name__}({args})"
 
     @property
     def bytes(self) -> bytes:
@@ -308,48 +367,36 @@ class TextPart:
         _validate_text(self.text, field_name="TextPart.text")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class ImagePart(_MediaMixin):
     """An image, addressed by exactly one of data/url/file_id."""
 
     media_type: str = "image/png"
-    data: str | None = None
-    url: str | None = None
-    file_id: str | None = None
     detail: Literal["low", "high", "auto"] | None = None
     type: Literal["image"] = field(default="image", init=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class AudioPart(_MediaMixin):
     """Audio content, addressed by exactly one of data/url/file_id."""
 
     media_type: str = "audio/wav"
-    data: str | None = None
-    url: str | None = None
-    file_id: str | None = None
     type: Literal["audio"] = field(default="audio", init=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class VideoPart(_MediaMixin):
     """Video content, addressed by exactly one of data/url/file_id."""
 
     media_type: str = "video/mp4"
-    data: str | None = None
-    url: str | None = None
-    file_id: str | None = None
     type: Literal["video"] = field(default="video", init=False)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class DocumentPart(_MediaMixin):
     """A document (PDF, etc.), addressed by exactly one of data/url/file_id."""
 
     media_type: str = "application/pdf"
-    data: str | None = None
-    url: str | None = None
-    file_id: str | None = None
     type: Literal["document"] = field(default="document", init=False)
 
 
@@ -367,9 +414,7 @@ class ToolCallPart:
             raise ValueError("ToolCallPart requires id")
         if not self.name:
             raise ValueError("ToolCallPart requires name")
-        object.__setattr__(
-            self, "input", _freeze_required_json_object(self.input, field_name="input")
-        )
+        _freeze_field(self, "input", required=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,14 +435,15 @@ class ToolResultPart:
             raise ValueError("ToolResultPart requires content")
         if not all(_is_part(p) for p in self.content):
             raise TypeError("ToolResultPart.content must contain Part objects")
+        if not isinstance(self.is_error, bool):
+            raise TypeError("ToolResultPart.is_error must be a bool")
         # Tool results may not contain protocol parts: tool calls, nested
         # tool results, model reasoning traces, or refusals.  Only the
         # presentational variants from ToolResultContentPart are allowed.
-        forbidden = (ToolCallPart, ToolResultPart, ThinkingPart)
-        if any(isinstance(p, forbidden) for p in self.content):
+        if any(isinstance(p, _TOOL_RESULT_FORBIDDEN_PARTS) for p in self.content):
             raise TypeError(
                 "ToolResultPart.content cannot contain tool calls, nested tool "
-                "results, or thinking parts"
+                "results, thinking parts, or refusals"
             )
 
 
@@ -438,6 +484,14 @@ class CitationPart:
     def __post_init__(self) -> None:
         if self.url is None and self.title is None and self.text is None:
             raise ValueError("CitationPart requires at least one of url, title, or text")
+
+
+_TOOL_RESULT_FORBIDDEN_PARTS: tuple[type, ...] = (
+    ToolCallPart,
+    ToolResultPart,
+    ThinkingPart,
+    RefusalPart,
+)
 
 
 # The union type.  This IS the vocabulary of content.
@@ -541,17 +595,64 @@ def _encode_data(data: bytes | str) -> str:
     return data
 
 
+def _prepare_media_factory_input(
+    part_type: str,
+    *,
+    url: str | None,
+    data: bytes | str | None,
+    file_id: str | None,
+    path: str | PathLike[str] | None,
+    media_type: str | None,
+    default_media_type: str,
+) -> tuple[str | None, str]:
+    provided = [
+        name
+        for name, value in (
+            ("data", data),
+            ("url", url),
+            ("file_id", file_id),
+            ("path", path),
+        )
+        if value is not None
+    ]
+    if len(provided) != 1:
+        raise ValueError(
+            f"{part_type} requires exactly one of data, url, file_id, or path"
+        )
+    if path is not None:
+        if str(path) == "":
+            raise ValueError(f"{part_type} path cannot be empty")
+        import mimetypes
+        from pathlib import Path
+
+        media_path = Path(path)
+        data = media_path.read_bytes()
+        media_type = media_type or mimetypes.guess_type(str(media_path))[0]
+    encoded = _encode_data(data) if data is not None else None
+    return encoded, media_type or default_media_type
+
+
 def image(
     *,
     url: str | None = None,
     data: bytes | str | None = None,
+    path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
 ) -> ImagePart:
+    encoded_data, resolved_media_type = _prepare_media_factory_input(
+        "ImagePart",
+        url=url,
+        data=data,
+        file_id=file_id,
+        path=path,
+        media_type=media_type,
+        default_media_type="image/png",
+    )
     return ImagePart(
-        media_type=media_type or "image/png",
-        data=_encode_data(data) if data is not None else None,
+        media_type=resolved_media_type,
+        data=encoded_data,
         url=url,
         file_id=file_id,
         detail=detail,
@@ -562,12 +663,22 @@ def audio(
     *,
     url: str | None = None,
     data: bytes | str | None = None,
+    path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> AudioPart:
+    encoded_data, resolved_media_type = _prepare_media_factory_input(
+        "AudioPart",
+        url=url,
+        data=data,
+        file_id=file_id,
+        path=path,
+        media_type=media_type,
+        default_media_type="audio/wav",
+    )
     return AudioPart(
-        media_type=media_type or "audio/wav",
-        data=_encode_data(data) if data is not None else None,
+        media_type=resolved_media_type,
+        data=encoded_data,
         url=url,
         file_id=file_id,
     )
@@ -577,12 +688,22 @@ def video(
     *,
     url: str | None = None,
     data: bytes | str | None = None,
+    path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> VideoPart:
+    encoded_data, resolved_media_type = _prepare_media_factory_input(
+        "VideoPart",
+        url=url,
+        data=data,
+        file_id=file_id,
+        path=path,
+        media_type=media_type,
+        default_media_type="video/mp4",
+    )
     return VideoPart(
-        media_type=media_type or "video/mp4",
-        data=_encode_data(data) if data is not None else None,
+        media_type=resolved_media_type,
+        data=encoded_data,
         url=url,
         file_id=file_id,
     )
@@ -592,12 +713,22 @@ def document(
     *,
     url: str | None = None,
     data: bytes | str | None = None,
+    path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> DocumentPart:
+    encoded_data, resolved_media_type = _prepare_media_factory_input(
+        "DocumentPart",
+        url=url,
+        data=data,
+        file_id=file_id,
+        path=path,
+        media_type=media_type,
+        default_media_type="application/pdf",
+    )
     return DocumentPart(
-        media_type=media_type or "application/pdf",
-        data=_encode_data(data) if data is not None else None,
+        media_type=resolved_media_type,
+        data=encoded_data,
         url=url,
         file_id=file_id,
     )
@@ -619,14 +750,7 @@ def tool_result(
     content can be a sequence of parts, a single part, or a string
     (which becomes a TextPart).
     """
-    if isinstance(content, str):
-        parts = (TextPart(text=content),)
-    elif _is_part(content):
-        parts = (content,)
-    elif isinstance(content, Sequence):
-        parts = tuple(content)
-    else:
-        raise TypeError("tool_result content must be a string, Part, or sequence of Parts")
+    parts = _normalize_parts(content)  # type: ignore[arg-type]
     return ToolResultPart(id=id, content=parts, name=name, is_error=is_error)
 
 
@@ -866,7 +990,7 @@ class ThinkingDelta:
         _validate_part_index(self.part_index)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class AudioDelta:
     """An audio data fragment arriving during streaming."""
 
@@ -885,8 +1009,16 @@ class AudioDelta:
         ):
             raise ValueError("AudioDelta media_type cannot be empty")
 
+    def __repr__(self) -> str:
+        return (
+            "AudioDelta("
+            f"data={_base64_summary(self.data)!r}, "
+            f"part_index={self.part_index!r}, "
+            f"media_type={self.media_type!r})"
+        )
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True, repr=False)
 class ImageDelta:
     """An image fragment, addressed by exactly one of data/url/file_id."""
 
@@ -899,11 +1031,23 @@ class ImageDelta:
 
     def __post_init__(self) -> None:
         _validate_part_index(self.part_index)
-        if self.media_type == "":
+        if self.media_type is not None and (
+            not isinstance(self.media_type, str) or self.media_type == ""
+        ):
             raise ValueError("ImageDelta media_type cannot be empty")
         _validate_media("ImageDelta", self.data, self.url, self.file_id)
         if self.data is not None:
             _decode_data("ImageDelta", self.data)
+
+    def __repr__(self) -> str:
+        return (
+            "ImageDelta("
+            f"data={_base64_summary(self.data)!r}, "
+            f"url={self.url!r}, "
+            f"file_id={self.file_id!r}, "
+            f"part_index={self.part_index!r}, "
+            f"media_type={self.media_type!r})"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1060,11 +1204,7 @@ class StreamEvent:
             raise TypeError("StreamEvent.usage must be a Usage")
         if self.error is not None and not isinstance(self.error, ErrorDetail):
             raise TypeError("StreamEvent.error must be an ErrorDetail")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 # ─── Tools ───────────────────────────────────────────────────────────
@@ -1143,11 +1283,7 @@ class FunctionTool:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("FunctionTool requires name")
-        object.__setattr__(
-            self,
-            "parameters",
-            _freeze_required_json_object(self.parameters, field_name="parameters"),
-        )
+        _freeze_field(self, "parameters", required=True)
 
     @staticmethod
     def from_fn(fn: Callable[..., Any]) -> "FunctionTool":
@@ -1189,11 +1325,7 @@ class BuiltinTool:
     def __post_init__(self) -> None:
         if not self.name:
             raise ValueError("BuiltinTool requires name")
-        object.__setattr__(
-            self,
-            "config",
-            _freeze_optional_json_object(self.config, field_name="config"),
-        )
+        _freeze_field(self, "config")
 
 
 Tool: TypeAlias = FunctionTool | BuiltinTool
@@ -1258,7 +1390,7 @@ class ToolChoice:
     """How the model should use tools."""
 
     mode: Literal["auto", "required", "none"] = "auto"
-    allowed: Sequence[str] = ()
+    allowed: Sequence[str | Tool] | Tool = ()
     parallel: bool | None = None
 
     def __post_init__(self) -> None:
@@ -1266,7 +1398,16 @@ class ToolChoice:
             raise ValueError(f"unsupported tool choice mode: {self.mode}")
         if isinstance(self.allowed, str):
             raise TypeError("ToolChoice.allowed must be a sequence of tool names, not a string")
-        object.__setattr__(self, "allowed", tuple(self.allowed))
+        raw_allowed = (
+            (self.allowed,)
+            if isinstance(self.allowed, (FunctionTool, BuiltinTool))
+            else tuple(self.allowed)
+        )
+        allowed = tuple(
+            item.name if isinstance(item, (FunctionTool, BuiltinTool)) else item
+            for item in raw_allowed
+        )
+        object.__setattr__(self, "allowed", allowed)
         if any(not isinstance(name, str) or not name for name in self.allowed):
             raise ValueError("ToolChoice.allowed must contain non-empty tool names")
         if self.mode == "none" and (self.allowed or self.parallel is not None):
@@ -1293,12 +1434,7 @@ class Config:
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
-        if self.stop is None:
-            stop = ()
-        elif isinstance(self.stop, str):
-            stop = (self.stop,)
-        else:
-            stop = tuple(self.stop)
+        stop = (self.stop,) if isinstance(self.stop, str) else tuple(self.stop or ())
         object.__setattr__(self, "stop", stop)
         _validate_positive(self.max_tokens, field_name="max_tokens")
         _validate_positive(self.top_k, field_name="top_k")
@@ -1318,18 +1454,8 @@ class Config:
             raise TypeError("tool_choice must be a ToolChoice")
         if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
             raise TypeError("reasoning must be a Reasoning")
-        object.__setattr__(
-            self,
-            "response_format",
-            _freeze_optional_json_object(
-                self.response_format, field_name="response_format"
-            ),
-        )
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "response_format")
+        _freeze_field(self, "extensions")
 
 
 # ─── Request ─────────────────────────────────────────────────────────
@@ -1453,8 +1579,9 @@ class Usage:
 class Response:
     """The composed artifact returned by a foundation model.
 
-    Properties provide convenient access to common content shapes
-    without requiring callers to walk the parts list.
+    ``Response`` keeps only minimal convenience properties.  Use
+    ``response.message.first(...)`` and ``response.message.parts_of(...)``
+    for variant-specific content access.
     """
 
     id: str | None
@@ -1477,20 +1604,7 @@ class Response:
             raise ValueError(f"unsupported finish reason: {self.finish_reason}")
         if not isinstance(self.usage, Usage):
             raise TypeError("Response.usage must be a Usage")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
-
-    def _require_part(self, cls: type[_P], label: str) -> _P:
-        part = self.message.first(cls)
-        if part is None:
-            raise ValueError(
-                f"Response contains no {label}. "
-                f"Parts: {[p.type for p in self.message.parts]}"
-            )
-        return part
+        _freeze_field(self, "provider_data")
 
     @property
     def text(self) -> str | None:
@@ -1501,57 +1615,9 @@ class Response:
         return self.message.parts_of(ToolCallPart)
 
     @property
-    def image(self) -> ImagePart | None:
-        return self.message.first(ImagePart)
-
-    @property
-    def images(self) -> list[ImagePart]:
-        return self.message.parts_of(ImagePart)
-
-    @property
-    def audio(self) -> AudioPart | None:
-        return self.message.first(AudioPart)
-
-    @property
-    def audios(self) -> list[AudioPart]:
-        return self.message.parts_of(AudioPart)
-
-    @property
-    def video(self) -> VideoPart | None:
-        return self.message.first(VideoPart)
-
-    @property
-    def videos(self) -> list[VideoPart]:
-        return self.message.parts_of(VideoPart)
-
-    @property
-    def document(self) -> DocumentPart | None:
-        return self.message.first(DocumentPart)
-
-    @property
-    def documents(self) -> list[DocumentPart]:
-        return self.message.parts_of(DocumentPart)
-
-    @property
-    def thinking(self) -> str | None:
-        texts = [p.text for p in self.message.parts_of(ThinkingPart)]
-        return "\n".join(texts) if texts else None
-
-    @property
-    def citations(self) -> list[CitationPart]:
-        return self.message.parts_of(CitationPart)
-
-    @property
-    def refusal(self) -> RefusalPart | None:
-        return self.message.first(RefusalPart)
-
-    @property
-    def refusals(self) -> list[RefusalPart]:
-        return self.message.parts_of(RefusalPart)
-
-    @property
     def json(self) -> Any:
         import json as _json
+        import re
 
         t = self.text
         if t is None:
@@ -1560,10 +1626,13 @@ class Response:
                 f"Parts: {[p.type for p in self.message.parts]}"
             )
         stripped = t.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            if lines and lines[0].startswith("```") and lines[-1].strip() == "```":
-                stripped = "\n".join(lines[1:-1]).strip()
+        match = re.search(
+            r"```[ \t]*(?:json)?[ \t\r\n]+(.*?)\s*```",
+            stripped,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            stripped = match.group(1).strip()
         try:
             return _json.loads(stripped)
         except _json.JSONDecodeError as e:
@@ -1571,22 +1640,6 @@ class Response:
             raise ValueError(
                 f"Cannot parse response as JSON: {e}\nRaw text: {preview}"
             ) from e
-
-    @property
-    def image_bytes(self) -> bytes:
-        return self._require_part(ImagePart, "image").bytes
-
-    @property
-    def audio_bytes(self) -> bytes:
-        return self._require_part(AudioPart, "audio").bytes
-
-    @property
-    def video_bytes(self) -> bytes:
-        return self._require_part(VideoPart, "video").bytes
-
-    @property
-    def document_bytes(self) -> bytes:
-        return self._require_part(DocumentPart, "document").bytes
 
 
 # ─── Embeddings ──────────────────────────────────────────────────────
@@ -1605,11 +1658,7 @@ class EmbeddingRequest(_ModelRequest):
             raise ValueError("inputs cannot be empty")
         if any(not isinstance(x, str) or x == "" for x in self.inputs):
             raise ValueError("inputs must contain non-empty strings")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "extensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1642,17 +1691,13 @@ class EmbeddingResponse:
                         "EmbeddingResponse vector elements must be finite"
                     )
         object.__setattr__(self, "vectors", vectors)
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 # ─── File Upload ─────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class FileUploadRequest:
     """A file upload request.
 
@@ -1682,10 +1727,16 @@ class FileUploadRequest:
             object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
         if not self.media_type:
             raise ValueError("media_type is required")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
+        _freeze_field(self, "extensions")
+
+    def __repr__(self) -> str:
+        return (
+            "FileUploadRequest("
+            f"filename={self.filename!r}, "
+            f"bytes_data={_bytes_summary(self.bytes_data)!r}, "
+            f"media_type={self.media_type!r}, "
+            f"model={self.model!r}, "
+            f"extensions={self.extensions!r})"
         )
 
 
@@ -1697,11 +1748,7 @@ class FileUploadResponse:
     def __post_init__(self) -> None:
         if not self.id:
             raise ValueError("FileUploadResponse requires id")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 # ─── Batch ───────────────────────────────────────────────────────────
@@ -1722,11 +1769,7 @@ class BatchRequest(_ModelRequest):
         mismatched = [r.model for r in self.requests if r.model != self.model]
         if mismatched:
             raise ValueError("BatchRequest.model must match every nested Request.model")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "extensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1740,11 +1783,7 @@ class BatchResponse:
             raise ValueError("BatchResponse requires id")
         if not self.status:
             raise ValueError("BatchResponse requires status")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1773,11 +1812,7 @@ class ImageGenerationRequest(_PromptRequest):
             not isinstance(self.size, str) or self.size == ""
         ):
             raise ValueError("size cannot be empty")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "extensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1791,11 +1826,7 @@ class ImageGenerationResponse:
             raise ValueError("ImageGenerationResponse requires at least one image")
         if not all(isinstance(img, ImagePart) for img in self.images):
             raise TypeError("images must contain ImagePart objects")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 # ─── Audio Generation ────────────────────────────────────────────────
@@ -1813,11 +1844,7 @@ class AudioGenerationRequest(_PromptRequest):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or value == ""):
                 raise ValueError(f"{field_name} cannot be empty")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "extensions")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1828,11 +1855,7 @@ class AudioGenerationResponse:
     def __post_init__(self) -> None:
         if not isinstance(self.audio, AudioPart):
             raise TypeError("audio must be an AudioPart")
-        object.__setattr__(
-            self,
-            "provider_data",
-            _freeze_optional_json_object(self.provider_data, field_name="provider_data"),
-        )
+        _freeze_field(self, "provider_data")
 
 
 EndpointRequest: TypeAlias = (
@@ -1897,11 +1920,7 @@ class LiveConfig(_ModelRequest):
             raise TypeError("input_format must be an AudioFormat")
         if self.output_format is not None and not isinstance(self.output_format, AudioFormat):
             raise TypeError("output_format must be an AudioFormat")
-        object.__setattr__(
-            self,
-            "extensions",
-            _freeze_optional_json_object(self.extensions, field_name="extensions"),
-        )
+        _freeze_field(self, "extensions")
 
 
 _LIVE_CLIENT_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
@@ -1958,9 +1977,9 @@ class LiveClientEvent:
         if self.type == "tool_result":
             if not all(_is_part(p) for p in self.content):
                 raise TypeError("LiveClientEvent.content must contain Part objects")
-            if any(isinstance(p, (ToolCallPart, ToolResultPart)) for p in self.content):
+            if any(isinstance(p, _TOOL_RESULT_FORBIDDEN_PARTS) for p in self.content):
                 raise TypeError(
-                    "LiveClientEvent.content cannot contain tool calls or nested tool results"
+                    "LiveClientEvent.content cannot contain model or protocol parts"
                 )
 
 
@@ -1987,11 +2006,7 @@ class LiveServerEvent:
         if self.error is not None and not isinstance(self.error, ErrorDetail):
             raise TypeError("LiveServerEvent.error must be an ErrorDetail")
         if self.type == "tool_call":
-            object.__setattr__(
-                self,
-                "input",
-                _freeze_required_json_object(self.input, field_name="input"),
-            )
+            _freeze_field(self, "input", required=True)
 
 
 # ─── ToolCallInfo (for callbacks) ────────────────────────────────────
@@ -2011,6 +2026,4 @@ class ToolCallInfo:
             raise ValueError("ToolCallInfo requires id")
         if not self.name:
             raise ValueError("ToolCallInfo requires name")
-        object.__setattr__(
-            self, "input", _freeze_required_json_object(self.input, field_name="input")
-        )
+        _freeze_field(self, "input", required=True)

@@ -280,13 +280,23 @@ class Result:
             except StopIteration:
                 return
 
+    def _require_part(self, cls: type[Any], label: str) -> Any:
+        part = self.response.message.first(cls)
+        if part is None:
+            raise ValueError(
+                f"Response contains no {label}. "
+                f"Parts: {[p.type for p in self.response.message.parts]}"
+            )
+        return part
+
     @property
     def text(self) -> str | None:
         return self.response.text
 
     @property
     def thinking(self) -> str | None:
-        return self.response.thinking
+        texts = [p.text for p in self.response.message.parts_of(ThinkingPart)]
+        return "\n".join(texts) if texts else None
 
     @property
     def tool_calls(self) -> list[ToolCallPart]:
@@ -294,35 +304,35 @@ class Result:
 
     @property
     def image(self) -> ImagePart | None:
-        return self.response.image
+        return self.response.message.first(ImagePart)
 
     @property
     def images(self) -> list[ImagePart]:
-        return self.response.images
+        return self.response.message.parts_of(ImagePart)
 
     @property
     def audio(self) -> AudioPart | None:
-        return self.response.audio
+        return self.response.message.first(AudioPart)
 
     @property
     def video(self) -> VideoPart | None:
-        return self.response.video
+        return self.response.message.first(VideoPart)
 
     @property
     def videos(self) -> list[VideoPart]:
-        return self.response.videos
+        return self.response.message.parts_of(VideoPart)
 
     @property
     def document(self) -> DocumentPart | None:
-        return self.response.document
+        return self.response.message.first(DocumentPart)
 
     @property
     def documents(self) -> list[DocumentPart]:
-        return self.response.documents
+        return self.response.message.parts_of(DocumentPart)
 
     @property
     def citations(self) -> list[CitationPart]:
-        return self.response.citations
+        return self.response.message.parts_of(CitationPart)
 
     @property
     def usage(self) -> Usage:
@@ -342,19 +352,19 @@ class Result:
 
     @property
     def image_bytes(self) -> bytes:
-        return self.response.image_bytes
+        return self._require_part(ImagePart, "image").bytes
 
     @property
     def audio_bytes(self) -> bytes:
-        return self.response.audio_bytes
+        return self._require_part(AudioPart, "audio").bytes
 
     @property
     def video_bytes(self) -> bytes:
-        return self.response.video_bytes
+        return self._require_part(VideoPart, "video").bytes
 
     @property
     def document_bytes(self) -> bytes:
-        return self.response.document_bytes
+        return self._require_part(DocumentPart, "document").bytes
 
     @property
     def response(self) -> Response:

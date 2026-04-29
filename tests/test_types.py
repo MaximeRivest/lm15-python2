@@ -22,6 +22,7 @@ from lm15.types import (
     ImageDelta,
     ImageGenerationRequest,
     ImagePart,
+    LiveClientEvent,
     LiveServerEvent,
     Message,
     Reasoning,
@@ -37,7 +38,11 @@ from lm15.types import (
     ToolResultPart,
     Usage,
     VideoPart,
+    audio,
+    document,
+    image,
     tool_call,
+    video,
 )
 
 
@@ -49,15 +54,58 @@ def test_media_parts_share_validation_and_byte_access() -> None:
     assert ImagePart(data=_b64(b"image")).bytes == b"image"
     assert AudioPart(data=_b64(b"audio")).bytes == b"audio"
     assert DocumentPart(data=_b64(b"doc")).bytes == b"doc"
+    assert (
+        ImagePart(data=f"data:image/png;base64,{_b64(b'image')}").bytes
+        == b"image"
+    )
 
     with pytest.raises(ValueError, match="requires exactly one"):
         ImagePart(data=_b64(b"image"), url="https://example.com/image.png")
+
+
+def test_media_reprs_summarize_large_payloads() -> None:
+    payload = _b64(b"x" * 128)
+    raw = b"y" * 128
+
+    for value in (
+        ImagePart(data=payload),
+        AudioDelta(data=payload),
+        ImageDelta(data=payload),
+    ):
+        rendered = repr(value)
+        assert payload not in rendered
+        assert "<base64:" in rendered
+
+    rendered_upload = repr(FileUploadRequest(filename="f.bin", bytes_data=raw))
+    assert repr(raw) not in rendered_upload
+    assert "<bytes: 128 bytes>" in rendered_upload
+
+
+def test_media_factories_accept_paths(tmp_path) -> None:
+    png = tmp_path / "cat.png"
+    wav = tmp_path / "sound.wav"
+    mp4 = tmp_path / "clip.mp4"
+    pdf = tmp_path / "doc.pdf"
+    png.write_bytes(b"image")
+    wav.write_bytes(b"audio")
+    mp4.write_bytes(b"video")
+    pdf.write_bytes(b"doc")
+
+    assert image(path=png).media_type == "image/png"
+    assert image(path=png).bytes == b"image"
+    assert audio(path=wav).bytes == b"audio"
+    assert video(path=mp4).bytes == b"video"
+    assert document(path=pdf).bytes == b"doc"
+
+    with pytest.raises(ValueError, match="exactly one"):
+        image(path=png, data=b"image")
 
 
 def test_message_filters_power_response_helpers() -> None:
     image = ImagePart(data=_b64(b"image"))
     video = VideoPart(data=_b64(b"video"))
     document = DocumentPart(data=_b64(b"doc"))
+    citation = CitationPart(url="https://example.com")
     message = Message.assistant(
         [
             TextPart("hello"),
@@ -65,7 +113,7 @@ def test_message_filters_power_response_helpers() -> None:
             image,
             video,
             document,
-            CitationPart(url="https://example.com"),
+            citation,
         ]
     )
     response = Response(
@@ -78,18 +126,24 @@ def test_message_filters_power_response_helpers() -> None:
 
     assert message.parts_of(TextPart) == [TextPart("hello")]
     assert message.first(ImagePart) is image
+    assert message.parts_of(VideoPart) == [video]
+    assert message.parts_of(DocumentPart) == [document]
+    assert message.parts_of(CitationPart) == [citation]
     assert response.text == "hello"
-    assert response.thinking == "hidden"
-    assert response.image is image
-    assert response.images == [image]
-    assert response.image_bytes == b"image"
-    assert response.video is video
-    assert response.videos == [video]
-    assert response.video_bytes == b"video"
-    assert response.document is document
-    assert response.documents == [document]
-    assert response.document_bytes == b"doc"
-    assert response.citations == [CitationPart(url="https://example.com")]
+    assert response.tool_calls == []
+    assert not hasattr(response, "image")
+
+
+def test_response_json_extracts_fenced_json_with_surrounding_text() -> None:
+    response = Response(
+        id="r1",
+        model="m",
+        message=Message.assistant('Here you go:\n```json\n{"a": 1}\n```\nDone.'),
+        finish_reason="stop",
+        usage=Usage(),
+    )
+
+    assert response.json == {"a": 1}
 
 
 def test_delta_variants_are_proper_unions() -> None:
@@ -103,6 +157,12 @@ def test_delta_variants_are_proper_unions() -> None:
 def test_image_delta_requires_exactly_one_media_address() -> None:
     with pytest.raises(ValueError, match="requires exactly one"):
         ImageDelta()
+
+    with pytest.raises(ValueError, match="media_type"):
+        ImageDelta(
+            url="https://example.com/image.png",
+            media_type=123,  # type: ignore[arg-type]
+        )
 
     assert (
         ImageDelta(url="https://example.com/image.png").url
@@ -181,6 +241,13 @@ def test_sequence_inputs_are_normalized_to_tuples() -> None:
     assert config.stop == ("END",)
 
 
+def test_tool_choice_allowed_accepts_tool_objects() -> None:
+    lookup = FunctionTool(name="lookup")
+
+    assert ToolChoice(allowed=[lookup]).allowed == ("lookup",)
+    assert ToolChoice(allowed=lookup).allowed == ("lookup",)
+
+
 def test_stream_events_validate_type_specific_fields() -> None:
     with pytest.raises(ValueError, match="requires delta"):
         StreamEvent(type="delta")
@@ -204,17 +271,40 @@ def test_numeric_budgets_and_usage_cannot_be_negative() -> None:
 
 def test_frozen_json_object_blocks_in_place_or_assignment() -> None:
     """Provider/tool-call payloads must remain immutable through `|=` aliases."""
-    call = ToolCallPart(id="c", name="f", input={"a": 1})
+    call = ToolCallPart(id="c", name="f", input={"a": {"b": [1]}})
     aliased = call.input
     with pytest.raises(TypeError):
         aliased |= {"mutated": True}
     assert "mutated" not in call.input
+
+    unwrapped = call.input.unwrap()  # type: ignore[attr-defined]
+    unwrapped["a"]["b"].append(2)  # type: ignore[index, union-attr]
+    assert call.input["a"]["b"] == [1]  # type: ignore[index]
 
 
 def test_tool_result_rejects_thinking_and_protocol_parts() -> None:
     """ToolResultPart rejects parts outside ToolResultContentPart at runtime."""
     with pytest.raises(TypeError, match="thinking parts"):
         ToolResultPart(id="c", content=(ThinkingPart("internal"),))
+    with pytest.raises(TypeError, match="refusals"):
+        ToolResultPart(id="c", content=(RefusalPart("no"),))
+    with pytest.raises(TypeError, match="is_error"):
+        ToolResultPart(
+            id="c",
+            content=(TextPart("ok"),),
+            is_error=None,  # type: ignore[arg-type]
+        )
+
+
+def test_live_client_tool_result_rejects_model_and_protocol_parts() -> None:
+    with pytest.raises(TypeError, match="model or protocol parts"):
+        LiveClientEvent(
+            type="tool_result",
+            id="c",
+            content=(ThinkingPart("internal"),),
+        )
+    with pytest.raises(TypeError, match="model or protocol parts"):
+        LiveClientEvent(type="tool_result", id="c", content=(RefusalPart("no"),))
 
 
 def test_user_messages_reject_citations() -> None:
