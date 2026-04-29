@@ -22,9 +22,8 @@ Design principles:
    everywhere — in memory, in deltas, in serialization.
 
 3. Frozen + slotted dataclasses throughout.  Dataclass attributes are
-   immutable after construction, validation runs once in __post_init__, and
-   JSON payloads are validated but otherwise left as ordinary Python
-   containers.
+   shallowly immutable after construction: fields cannot be rebound, while
+   caller-provided JSON containers remain ordinary mutable Python containers.
 
 4. Universal structure, provider-specific values.  The shape of a
    Request is universal.  Provider-specific configuration flows
@@ -32,10 +31,10 @@ Design principles:
    Provider-specific response metadata lives in Response.provider_data.
 
 5. Runtime validation is deliberately narrow.  Constructors enforce the
-   invariants that make objects meaningful (required identities, valid
-   media addresses, non-negative token counts, JSON-shaped extension
-   fields) while adapters remain responsible for normalizing provider
-   quirks before constructing these types.
+   invariants that make objects meaningful (required identities, one media
+   source, non-negative token counts, JSON-serializable extension fields)
+   while adapters remain responsible for normalizing provider quirks before
+   constructing these types.
 """
 
 from __future__ import annotations
@@ -63,6 +62,7 @@ PartType = Literal[
     "audio",
     "video",
     "document",
+    "binary",
     "tool_call",
     "tool_result",
     "thinking",
@@ -118,16 +118,41 @@ JsonObject: TypeAlias = dict[str, JsonValue]
 
 
 def _is_json_value(value: Any) -> bool:
-    """Return True if value is representable as standard JSON."""
-    if value is None or isinstance(value, bool) or isinstance(value, (int, str)):
-        return True
-    if isinstance(value, float):
-        return _math.isfinite(value)
-    if isinstance(value, list):
-        return all(_is_json_value(x) for x in value)
-    if isinstance(value, dict):
-        return all(isinstance(k, str) and _is_json_value(v) for k, v in value.items())
-    return False
+    """Return True if value is made only of strict JSON containers.
+
+    Complete JSON validation is necessarily proportional to payload size, so
+    keep it iterative and simple: no recursion, no copying, and no coercion of
+    tuples or non-string dict keys into something different on the wire.
+    """
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        kind = type(item)
+        if item is None or kind is bool or kind is int or kind is str:
+            continue
+        if kind is float:
+            if not _math.isfinite(item):
+                return False
+            continue
+        if kind is list:
+            stack.extend(item)
+            continue
+        if kind is dict:
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    return False
+                stack.append(child)
+            continue
+        # Keep compatibility with scalar subclasses without paying
+        # ``isinstance`` costs for the common exact built-in types above.
+        if isinstance(item, (int, str)):
+            continue
+        if isinstance(item, float):
+            if not _math.isfinite(item):
+                return False
+            continue
+        return False
+    return True
 
 
 def _check_json_object(value: Any, *, field_name: str, required: bool = False) -> None:
@@ -213,17 +238,32 @@ def _validate_optional_bool(value: Any, *, field_name: str) -> None:
 
 
 def _validate_media(
-    part_type: str, data: str | None, url: str | None, file_id: str | None
+    part_type: str,
+    data: str | None,
+    url: str | None,
+    file_id: str | None,
+    path: Path | None,
 ) -> None:
-    """Validate that exactly one non-empty media address is set."""
-    provided = [
-        (name, value)
-        for name, value in (("data", data), ("url", url), ("file_id", file_id))
-        if value is not None
-    ]
-    if len(provided) != 1:
-        raise ValueError(f"{part_type} requires exactly one of data, url, or file_id")
-    name, value = provided[0]
+    """Validate that exactly one non-empty media source is set."""
+    count = (
+        (data is not None)
+        + (url is not None)
+        + (file_id is not None)
+        + (path is not None)
+    )
+    if count != 1:
+        raise ValueError(f"{part_type} requires exactly one of data, url, file_id, or path")
+    if path is not None:
+        if not isinstance(path, Path):
+            raise TypeError(f"{part_type} path must be a pathlib.Path")
+        return
+    name, value = (
+        ("data", data)
+        if data is not None
+        else ("url", url)
+        if url is not None
+        else ("file_id", file_id)
+    )
     if not isinstance(value, str):
         raise TypeError(f"{part_type} {name} must be a string")
     if value == "":
@@ -234,12 +274,7 @@ def _validate_media_delta_addresses(
     part_type: str, data: str | None, url: str | None, file_id: str | None
 ) -> None:
     """Validate media-delta address shape without requiring a final address."""
-    provided = [
-        name
-        for name, value in (("data", data), ("url", url), ("file_id", file_id))
-        if value is not None
-    ]
-    if len(provided) > 1:
+    if (data is not None) + (url is not None) + (file_id is not None) > 1:
         raise ValueError(f"{part_type} can include at most one of data, url, or file_id")
 
 
@@ -258,7 +293,18 @@ def _base64_payload(part_type: str, data: str | None) -> str:
         raise ValueError(f"{part_type}.data cannot be empty")
     if data.startswith("data:") and ";base64," in data:
         data = data.split(";base64,", 1)[1]
-    return "".join(data.split())
+    stripped = data.strip()
+    if (
+        stripped != data
+        or " " in stripped
+        or "\n" in stripped
+        or "\r" in stripped
+        or "\t" in stripped
+        or "\v" in stripped
+        or "\f" in stripped
+    ):
+        return "".join(stripped.split())
+    return data
 
 
 def _validate_base64_data(part_type: str, data: str | None) -> None:
@@ -291,12 +337,24 @@ def _base64_chunk_summary(data: str | None) -> str | None:
         return None
     if data.startswith("data:") and ";base64," in data:
         data = data.split(";base64,", 1)[1]
-    payload = "".join(data.split())
-    return f"<base64: {len(payload)} chars>"
+    stripped = data.strip()
+    if (
+        stripped != data
+        or " " in stripped
+        or "\n" in stripped
+        or "\r" in stripped
+        or "\t" in stripped
+        or "\v" in stripped
+        or "\f" in stripped
+    ):
+        stripped = "".join(stripped.split())
+    return f"<base64: {len(stripped)} chars>"
 
 
-def _bytes_summary(data: bytes | bytearray) -> str:
+def _bytes_summary(data: bytes | bytearray | None) -> str | None:
     """Return a short repr-safe summary for raw bytes."""
+    if data is None:
+        return None
     return f"<bytes: {len(data)} bytes>"
 
 
@@ -308,12 +366,16 @@ class _MediaMixin:
     data: str | None = None
     url: str | None = None
     file_id: str | None = None
-    _decoded_bytes: bytes | None = field(default=None, init=False, repr=False, compare=False, hash=False)
+    path: Path | None = None
 
     def __post_init__(self) -> None:
+        if self.path is not None and not isinstance(self.path, Path):
+            if str(self.path) == "":
+                raise ValueError(f"{self.__class__.__name__} path cannot be empty")
+            object.__setattr__(self, "path", Path(self.path))
         if not isinstance(self.media_type, str) or self.media_type == "":
             raise ValueError(f"{self.__class__.__name__} requires media_type")
-        _validate_media(self.__class__.__name__, self.data, self.url, self.file_id)
+        _validate_media(self.__class__.__name__, self.data, self.url, self.file_id, self.path)
         if self.data is not None:
             _validate_base64_data(self.__class__.__name__, self.data)
 
@@ -323,6 +385,7 @@ class _MediaMixin:
             ("data", _base64_summary(self.data)),
             ("url", self.url),
             ("file_id", self.file_id),
+            ("path", self.path),
         ]
         detail = getattr(self, "detail", None)
         if detail is not None:
@@ -332,9 +395,14 @@ class _MediaMixin:
 
     @property
     def bytes(self) -> bytes:
-        if self._decoded_bytes is None:
-            object.__setattr__(self, "_decoded_bytes", _decode_data(self.__class__.__name__, self.data))
-        return self._decoded_bytes
+        if self.data is not None:
+            return _decode_data(self.__class__.__name__, self.data)
+        if self.path is not None:
+            return self.path.read_bytes()
+        raise ValueError(
+            f"{self.__class__.__name__} has no inline data or path; "
+            "fetch url/file_id-addressed media before decoding"
+        )
 
 
 # ─── Parts ───────────────────────────────────────────────────────────
@@ -356,7 +424,7 @@ class TextPart:
 
 @dataclass(frozen=True, slots=True, repr=False)
 class ImagePart(_MediaMixin):
-    """An image, addressed by exactly one of data/url/file_id."""
+    """An image, addressed by exactly one of data/url/file_id/path."""
 
     media_type: str = "image/png"
     detail: Literal["low", "high", "auto"] | None = None
@@ -371,7 +439,7 @@ class ImagePart(_MediaMixin):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class AudioPart(_MediaMixin):
-    """Audio content, addressed by exactly one of data/url/file_id."""
+    """Audio content, addressed by exactly one of data/url/file_id/path."""
 
     media_type: str = "audio/wav"
     type: Literal["audio"] = field(default="audio", init=False)
@@ -379,7 +447,7 @@ class AudioPart(_MediaMixin):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class VideoPart(_MediaMixin):
-    """Video content, addressed by exactly one of data/url/file_id."""
+    """Video content, addressed by exactly one of data/url/file_id/path."""
 
     media_type: str = "video/mp4"
     type: Literal["video"] = field(default="video", init=False)
@@ -387,10 +455,18 @@ class VideoPart(_MediaMixin):
 
 @dataclass(frozen=True, slots=True, repr=False)
 class DocumentPart(_MediaMixin):
-    """A document (PDF, etc.), addressed by exactly one of data/url/file_id."""
+    """A document (PDF, etc.), addressed by exactly one of data/url/file_id/path."""
 
     media_type: str = "application/pdf"
     type: Literal["document"] = field(default="document", init=False)
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class BinaryPart(_MediaMixin):
+    """Arbitrary binary content, addressed by exactly one media source."""
+
+    media_type: str = "application/octet-stream"
+    type: Literal["binary"] = field(default="binary", init=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +574,7 @@ Part: TypeAlias = (
     | AudioPart
     | VideoPart
     | DocumentPart
+    | BinaryPart
     | ToolCallPart
     | ToolResultPart
     | ThinkingPart
@@ -520,7 +597,7 @@ def _is_part(value: object) -> bool:
     return isinstance(value, PART_CLASSES)
 
 
-MediaPart: TypeAlias = ImagePart | AudioPart | VideoPart | DocumentPart
+MediaPart: TypeAlias = ImagePart | AudioPart | VideoPart | DocumentPart | BinaryPart
 MEDIA_TYPES: tuple[type, ...] = get_args(MediaPart)
 
 # Shared endpoint metadata/content aliases
@@ -531,7 +608,7 @@ ProviderData: TypeAlias = JsonObject
 # (ToolCallPart, ToolResultPart, ThinkingPart, and RefusalPart are excluded
 # both at the type level and in ``ToolResultPart.__post_init__``.)
 ToolResultContentPart: TypeAlias = (
-    TextPart | ImagePart | AudioPart | VideoPart | DocumentPart | CitationPart
+    TextPart | ImagePart | AudioPart | VideoPart | DocumentPart | BinaryPart | CitationPart
 )
 ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[ToolResultContentPart]
 
@@ -539,7 +616,7 @@ ToolResultContent: TypeAlias = str | ToolResultContentPart | Sequence[ToolResult
 # Excludes model/tool protocol parts which are produced by the model or
 # tool runtime, never authored by the caller.
 PromptPart: TypeAlias = (
-    TextPart | ImagePart | AudioPart | VideoPart | DocumentPart
+    TextPart | ImagePart | AudioPart | VideoPart | DocumentPart | BinaryPart
 )
 PromptContent: TypeAlias = str | PromptPart | Sequence[PromptPart]
 SystemContent: TypeAlias = PromptContent
@@ -553,6 +630,7 @@ AssistantPart: TypeAlias = (
     | AudioPart
     | VideoPart
     | DocumentPart
+    | BinaryPart
     | ToolCallPart
     | ThinkingPart
     | RefusalPart
@@ -619,29 +697,25 @@ def _prepare_media_factory_input(
     path: str | PathLike[str] | None,
     media_type: str | None,
     default_media_type: str,
-) -> tuple[str | None, str]:
-    provided = [
-        name
-        for name, value in (
-            ("data", data),
-            ("url", url),
-            ("file_id", file_id),
-            ("path", path),
-        )
-        if value is not None
-    ]
-    if len(provided) != 1:
+) -> tuple[str | None, Path | None, str]:
+    count = (
+        (data is not None)
+        + (url is not None)
+        + (file_id is not None)
+        + (path is not None)
+    )
+    if count != 1:
         raise ValueError(
             f"{part_type} requires exactly one of data, url, file_id, or path"
         )
+    media_path: Path | None = None
     if path is not None:
         if str(path) == "":
             raise ValueError(f"{part_type} path cannot be empty")
         media_path = Path(path)
-        data = media_path.read_bytes()
         media_type = media_type or _mimetypes.guess_type(str(media_path))[0]
     encoded = _encode_data(data) if data is not None else None
-    return encoded, media_type or default_media_type
+    return encoded, media_path, media_type or default_media_type
 
 
 def image(
@@ -653,7 +727,7 @@ def image(
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
 ) -> ImagePart:
-    encoded_data, resolved_media_type = _prepare_media_factory_input(
+    encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "ImagePart",
         url=url,
         data=data,
@@ -667,6 +741,7 @@ def image(
         data=encoded_data,
         url=url,
         file_id=file_id,
+        path=media_path,
         detail=detail,
     )
 
@@ -679,7 +754,7 @@ def audio(
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> AudioPart:
-    encoded_data, resolved_media_type = _prepare_media_factory_input(
+    encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "AudioPart",
         url=url,
         data=data,
@@ -693,6 +768,7 @@ def audio(
         data=encoded_data,
         url=url,
         file_id=file_id,
+        path=media_path,
     )
 
 
@@ -704,7 +780,7 @@ def video(
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> VideoPart:
-    encoded_data, resolved_media_type = _prepare_media_factory_input(
+    encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "VideoPart",
         url=url,
         data=data,
@@ -718,6 +794,7 @@ def video(
         data=encoded_data,
         url=url,
         file_id=file_id,
+        path=media_path,
     )
 
 
@@ -729,7 +806,7 @@ def document(
     file_id: str | None = None,
     media_type: str | None = None,
 ) -> DocumentPart:
-    encoded_data, resolved_media_type = _prepare_media_factory_input(
+    encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "DocumentPart",
         url=url,
         data=data,
@@ -743,6 +820,33 @@ def document(
         data=encoded_data,
         url=url,
         file_id=file_id,
+        path=media_path,
+    )
+
+
+def binary(
+    *,
+    url: str | None = None,
+    data: bytes | str | None = None,
+    path: str | PathLike[str] | None = None,
+    file_id: str | None = None,
+    media_type: str | None = None,
+) -> BinaryPart:
+    encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
+        "BinaryPart",
+        url=url,
+        data=data,
+        file_id=file_id,
+        path=path,
+        media_type=media_type,
+        default_media_type="application/octet-stream",
+    )
+    return BinaryPart(
+        media_type=resolved_media_type,
+        data=encoded_data,
+        url=url,
+        file_id=file_id,
+        path=media_path,
     )
 
 
@@ -760,9 +864,8 @@ def tool_result(
     """Create a tool result part.
 
     content can be a sequence of parts, a single part, or a string
-    (which becomes a TextPart).  Binary tool results must be wrapped in an
-    appropriate media part (ImagePart/AudioPart/VideoPart/DocumentPart) rather
-    than passed as raw bytes.
+    (which becomes a TextPart).  Raw bytes should be wrapped in a media part;
+    use BinaryPart for arbitrary bytes that are not image/audio/video/document.
     """
     parts = _normalize_parts(content)  # type: ignore[arg-type]
     return ToolResultPart(id=id, content=parts, name=name, is_error=is_error)
@@ -1063,7 +1166,7 @@ DELTA_TYPES: dict[str, type] = {_variant_type(cls): cls for cls in DELTA_CLASSES
 # unions to the derived DELTA_TYPES/PART_TYPES tables so adding a Part or
 # Delta variant fails fast at module import if the boundary drifts.
 StreamablePart: TypeAlias = TextPart | ThinkingPart | ImagePart | AudioPart | ToolCallPart | CitationPart
-NonStreamablePart: TypeAlias = VideoPart | DocumentPart | ToolResultPart | RefusalPart
+NonStreamablePart: TypeAlias = VideoPart | DocumentPart | BinaryPart | ToolResultPart | RefusalPart
 
 _STREAMABLE_PART_CLASSES: tuple[type, ...] = get_args(StreamablePart)
 _NON_STREAMABLE_PART_CLASSES: tuple[type, ...] = get_args(NonStreamablePart)
@@ -1406,21 +1509,17 @@ class Request(_ModelRequest):
 class Usage:
     """Token usage.
 
-    ``input_tokens`` and ``output_tokens`` are the canonical billing
-    dimensions: every other count (``cache_*``, ``reasoning_tokens``,
-    ``*_audio_tokens``) decomposes one of those two and is exposed only
-    for telemetry.
+    ``input_tokens`` and ``output_tokens`` are common dimensions.
+    ``total_tokens`` is the provider-reported or billed total when present;
+    providers may include reasoning, audio, cache, or future token classes in
+    totals differently, so it is not forced to equal input + output.
 
-    ``total_tokens`` defaults to ``input_tokens + output_tokens``.  When
-    supplied explicitly it must equal that sum; adapters are expected to
-    fold any provider-side reasoning/audio counts back into
-    ``input_tokens``/``output_tokens`` before constructing ``Usage`` so
-    the invariant always holds.
+    When ``total_tokens`` is omitted, it defaults to ``input_tokens +
+    output_tokens`` as a convenience for simple providers and tests.
     """
 
-    # ``None`` means "compute from input + output".  After
-    # ``__post_init__`` runs, ``total_tokens`` is stored as a
-    # non-negative ``int`` equal to ``input_tokens + output_tokens``.
+    # ``None`` means "compute from input + output".  An explicit value is
+    # preserved as provider telemetry after non-negative validation.
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int | None = None
@@ -1441,12 +1540,9 @@ class Usage:
             "output_audio_tokens",
         ):
             _validate_non_negative(getattr(self, field_name), field_name=field_name)
-        _validate_int(self.total_tokens, field_name="total_tokens")
-        computed_total = self.input_tokens + self.output_tokens
+        _validate_non_negative(self.total_tokens, field_name="total_tokens")
         if self.total_tokens is None:
-            object.__setattr__(self, "total_tokens", computed_total)
-        elif self.total_tokens != computed_total:
-            raise ValueError("total_tokens must equal input_tokens + output_tokens")
+            object.__setattr__(self, "total_tokens", self.input_tokens + self.output_tokens)
 
 
 # ─── Response ────────────────────────────────────────────────────────
@@ -1581,26 +1677,38 @@ class FileUploadRequest:
 
     Unlike most endpoint requests, ``model`` is optional because some
     providers scope file uploads to the account, not a specific model.
-    The non-default fields (``filename``, ``bytes_data``) are required
-    and have no defaults: a default-constructed FileUploadRequest is
-    not meaningful.
+    Uploads can be backed by in-memory bytes or by a local path.  Path-backed
+    uploads are lazy: adapters can stream from disk instead of forcing the
+    whole file into memory at construction time.
     """
 
     filename: str
-    bytes_data: bytes
+    bytes_data: bytes | None = None
     media_type: str = "application/octet-stream"
     model: str | None = None
     extensions: Extensions | None = None
+    path: Path | None = None
 
     def __post_init__(self) -> None:
         _validate_optional_text(self.model, field_name="FileUploadRequest.model", allow_empty=False)
         _validate_text(self.filename, field_name="FileUploadRequest.filename", allow_empty=False)
-        if not isinstance(self.bytes_data, (bytes, bytearray)):
-            raise TypeError("bytes_data must be bytes")
-        if not self.bytes_data:
-            raise ValueError("bytes_data is required")
-        if isinstance(self.bytes_data, bytearray):
-            object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
+        if self.path is not None and not isinstance(self.path, Path):
+            if str(self.path) == "":
+                raise ValueError("path cannot be empty")
+            object.__setattr__(self, "path", Path(self.path))
+        if self.bytes_data is None and self.path is None:
+            raise TypeError("FileUploadRequest requires bytes_data or path")
+        if self.bytes_data is not None and self.path is not None:
+            raise ValueError("FileUploadRequest requires exactly one of bytes_data or path")
+        if self.bytes_data is not None:
+            if not isinstance(self.bytes_data, (bytes, bytearray)):
+                raise TypeError("bytes_data must be bytes")
+            if not self.bytes_data:
+                raise ValueError("bytes_data is required")
+            if isinstance(self.bytes_data, bytearray):
+                object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
+        if self.path is not None and str(self.path) == "":
+            raise ValueError("path cannot be empty")
         _validate_text(self.media_type, field_name="FileUploadRequest.media_type", allow_empty=False)
         _validate_extensions_field(self)
 
@@ -1611,8 +1719,17 @@ class FileUploadRequest:
             f"bytes_data={_bytes_summary(self.bytes_data)!r}, "
             f"media_type={self.media_type!r}, "
             f"model={self.model!r}, "
-            f"extensions={self.extensions!r})"
+            f"extensions={self.extensions!r}, "
+            f"path={self.path!r})"
         )
+
+    @property
+    def bytes(self) -> bytes:
+        if self.bytes_data is not None:
+            return self.bytes_data
+        if self.path is not None:
+            return self.path.read_bytes()
+        raise ValueError("FileUploadRequest has neither bytes_data nor path")
 
 
 @dataclass(frozen=True, slots=True)

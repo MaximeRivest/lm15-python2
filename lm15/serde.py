@@ -14,6 +14,7 @@ from .types import (
     AudioDelta,
     AudioFormat,
     AudioPart,
+    BinaryPart,
     BuiltinTool,
     CitationDelta,
     CitationPart,
@@ -126,7 +127,7 @@ def part_to_dict(part: Part) -> dict[str, Any]:
         if part.title is not None:
             d["title"] = part.title
 
-    elif isinstance(part, (ImagePart, AudioPart, VideoPart, DocumentPart)):
+    elif isinstance(part, (ImagePart, AudioPart, VideoPart, DocumentPart, BinaryPart)):
         d["media_type"] = part.media_type
         if part.data is not None:
             d["data"] = part.data
@@ -134,6 +135,8 @@ def part_to_dict(part: Part) -> dict[str, Any]:
             d["url"] = part.url
         if part.file_id is not None:
             d["file_id"] = part.file_id
+        if part.path is not None:
+            d["path"] = str(part.path)
         if hasattr(part, "detail") and part.detail is not None:
             d["detail"] = part.detail
 
@@ -169,13 +172,14 @@ def part_from_dict(d: dict[str, Any]) -> Part:
     if t == "citation":
         return CitationPart(text=d.get("text"), url=d.get("url"), title=d.get("title"))
 
-    if t in ("image", "audio", "video", "document"):
+    if t in ("image", "audio", "video", "document", "binary"):
         cls = PART_TYPES[t]
         kwargs: dict[str, Any] = {
             "media_type": d.get("media_type", ""),
             "data": d.get("data"),
             "url": d.get("url"),
             "file_id": d.get("file_id"),
+            "path": d.get("path"),
         }
         if t == "image":
             kwargs["detail"] = d.get("detail")

@@ -13,6 +13,7 @@ from lm15.types import (
     AudioDelta,
     AudioPart,
     BatchRequest,
+    BinaryPart,
     CitationPart,
     Config,
     DocumentPart,
@@ -45,9 +46,11 @@ from lm15.types import (
     Usage,
     VideoPart,
     audio,
+    binary,
     document,
     image,
     tool_call,
+    tool_result,
     video,
 )
 
@@ -97,14 +100,28 @@ def test_media_factories_accept_paths(tmp_path) -> None:
     mp4.write_bytes(b"video")
     pdf.write_bytes(b"doc")
 
-    assert image(path=png).media_type == "image/png"
-    assert image(path=png).bytes == b"image"
+    img = image(path=png)
+    assert img.media_type == "image/png"
+    assert img.data is None
+    assert img.path == png
+    assert img.bytes == b"image"
+    png.write_bytes(b"updated")
+    assert img.bytes == b"updated"
     assert audio(path=wav).bytes == b"audio"
     assert video(path=mp4).bytes == b"video"
     assert document(path=pdf).bytes == b"doc"
 
     with pytest.raises(ValueError, match="exactly one"):
         image(path=png, data=b"image")
+
+
+def test_binary_part_covers_arbitrary_tool_result_bytes() -> None:
+    blob = binary(data=b"zip", media_type="application/zip")
+    result = tool_result("call_1", blob)
+
+    assert isinstance(blob, BinaryPart)
+    assert blob.bytes == b"zip"
+    assert result.content == (blob,)
 
 
 def test_message_filters_power_response_helpers() -> None:
@@ -308,6 +325,12 @@ def test_stream_events_are_variant_dataclasses() -> None:
     assert StreamEndEvent().type == "end"
 
 
+def test_usage_preserves_provider_reported_total() -> None:
+    usage = Usage(input_tokens=1, output_tokens=2, total_tokens=10)
+
+    assert usage.total_tokens == 10
+
+
 def test_numeric_budgets_and_usage_cannot_be_negative() -> None:
     with pytest.raises(ValueError, match="thinking_budget"):
         Reasoning(thinking_budget=0)
@@ -411,6 +434,16 @@ def test_file_upload_request_requires_payload() -> None:
         FileUploadRequest()  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="bytes_data"):
         FileUploadRequest(filename="f", bytes_data=b"")
+
+
+def test_file_upload_request_accepts_lazy_path(tmp_path) -> None:
+    payload = tmp_path / "payload.bin"
+    payload.write_bytes(b"payload")
+
+    request = FileUploadRequest(filename="payload.bin", path=payload)
+
+    assert request.bytes_data is None
+    assert request.bytes == b"payload"
 
 
 def test_live_and_stream_tool_call_deltas_are_symmetric_on_empty_input() -> None:

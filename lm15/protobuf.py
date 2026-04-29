@@ -468,8 +468,8 @@ def _maps(pb):
 
 def _media_source_to_proto(pb, part: ImagePart | AudioPart | VideoPart | DocumentPart):
     out = pb.MediaSource(media_type=part.media_type)
-    if part.data is not None:
-        out.data = base64.b64decode(part.data)
+    if part.data is not None or part.path is not None:
+        out.data = part.bytes
     elif part.url is not None:
         out.url = part.url
     elif part.file_id is not None:
@@ -1194,7 +1194,7 @@ def _embedding_response_from_proto(pb, msg):
 def _file_upload_request_to_proto(pb, value: FileUploadRequest):
     out = pb.FileUploadRequest(
         filename=value.filename,
-        bytes_data=value.bytes_data,
+        bytes_data=value.bytes,
         media_type=value.media_type,
     )
     if value.model is not None:
