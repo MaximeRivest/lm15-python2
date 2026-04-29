@@ -23,9 +23,10 @@ Design principles:
    everywhere — in memory, in deltas, in serialization.
 
 3. Frozen + slotted dataclasses throughout.  Objects are immutable
-   after construction, validated once in __post_init__, and
-   memory-efficient.  JSON dict/list payloads are recursively frozen
-   into dict/list-compatible read-only containers.
+   after construction, validated once in __post_init__, hashable when
+   their scalar fields are hashable, and memory-efficient.  JSON
+   dict/list payloads are recursively frozen into dict/list-compatible
+   read-only containers with stable hashes.
 
 4. Universal structure, provider-specific values.  The shape of a
    Request is universal.  Provider-specific configuration flows
@@ -41,11 +42,20 @@ Design principles:
 
 from __future__ import annotations
 
+import base64 as _base64
+import binascii as _binascii
+import inspect as _inspect
+import json as _json
+import math as _math
+import mimetypes as _mimetypes
+import re as _re
+import warnings as _warnings
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from os import PathLike
+from pathlib import Path
 from types import NoneType, UnionType
-from typing import Any, Callable, Literal, TypeAlias, TypeVar, Union, get_args, get_origin
+from typing import Annotated, Any, Callable, Literal, TypeAlias, TypeVar, Union, get_args, get_origin
 
 
 # ─── Literal vocabularies ────────────────────────────────────────────
@@ -65,6 +75,8 @@ PartType = Literal[
     "citation",
 ]
 
+# FinishReason values are a separate namespace from PartType values even when
+# a token such as "tool_call" appears in both.
 FinishReason = Literal["stop", "length", "tool_call", "content_filter", "error"]
 
 ReasoningEffort = Literal[
@@ -81,18 +93,24 @@ ErrorCode = Literal[
     "server",
     "provider",
 ]
-ERROR_CODES = (
-    "auth",
-    "billing",
-    "rate_limit",
-    "invalid_request",
-    "context_length",
-    "timeout",
-    "server",
-    "provider",
-)
+ERROR_CODES = frozenset(get_args(ErrorCode))
 
 StreamEventType = Literal["start", "delta", "end", "error"]
+BatchStatus = Literal["submitted", "queued", "running", "completed", "failed", "cancelled"]
+AudioEncoding = Literal["pcm16", "opus", "mp3", "aac"]
+ToolChoiceMode = Literal["auto", "required", "none"]
+LiveClientEventType = Literal["audio", "video", "text", "tool_result", "interrupt", "end_audio"]
+LiveServerEventType = Literal["audio", "text", "tool_call", "tool_call_delta", "interrupted", "turn_end", "error"]
+
+ROLE_VALUES = frozenset(get_args(Role))
+FINISH_REASONS = frozenset(get_args(FinishReason))
+REASONING_EFFORTS = frozenset(get_args(ReasoningEffort))
+STREAM_EVENT_TYPES = frozenset(get_args(StreamEventType))
+BATCH_STATUSES = frozenset(get_args(BatchStatus))
+AUDIO_ENCODINGS = frozenset(get_args(AudioEncoding))
+TOOL_CHOICE_MODES = frozenset(get_args(ToolChoiceMode))
+LIVE_CLIENT_EVENT_TYPES = frozenset(get_args(LiveClientEventType))
+LIVE_SERVER_EVENT_TYPES = frozenset(get_args(LiveServerEventType))
 
 _P = TypeVar("_P")
 
@@ -106,14 +124,31 @@ JsonArray: TypeAlias = list[JsonValue]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
 
+def _hashable_json_value(value: JsonValue) -> object:
+    """Return a hashable representation matching JSON equality semantics."""
+    if isinstance(value, dict):
+        return tuple(sorted((key, _hashable_json_value(item)) for key, item in value.items()))
+    if isinstance(value, list):
+        return tuple(_hashable_json_value(item) for item in value)
+    return value
+
+
 class _FrozenJsonObject(dict[str, JsonValue]):
     """A JSON object that remains dict-compatible but cannot be mutated."""
 
-    __slots__ = ()
+    __slots__ = ("_hash",)
 
     def unwrap(self) -> JsonObject:
         """Return a mutable deep copy using plain JSON containers."""
         return _thaw_json_value(self)  # type: ignore[return-value]
+
+    def __hash__(self) -> int:
+        try:
+            return self._hash
+        except AttributeError:
+            value = hash(_hashable_json_value(self))
+            object.__setattr__(self, "_hash", value)
+            return value
 
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("JSON objects on lm15 types are immutable")
@@ -121,6 +156,7 @@ class _FrozenJsonObject(dict[str, JsonValue]):
     __setitem__ = _readonly
     __delitem__ = _readonly
     __ior__ = _readonly
+    __setattr__ = _readonly
     clear = _readonly
     pop = _readonly
     popitem = _readonly
@@ -131,11 +167,19 @@ class _FrozenJsonObject(dict[str, JsonValue]):
 class _FrozenJsonArray(list[JsonValue]):
     """A JSON array that remains list-compatible but cannot be mutated."""
 
-    __slots__ = ()
+    __slots__ = ("_hash",)
 
     def unwrap(self) -> JsonArray:
         """Return a mutable deep copy using plain JSON containers."""
         return _thaw_json_value(self)  # type: ignore[return-value]
+
+    def __hash__(self) -> int:
+        try:
+            return self._hash
+        except AttributeError:
+            value = hash(_hashable_json_value(self))
+            object.__setattr__(self, "_hash", value)
+            return value
 
     def _readonly(self, *args: Any, **kwargs: Any) -> None:
         raise TypeError("JSON arrays on lm15 types are immutable")
@@ -144,6 +188,7 @@ class _FrozenJsonArray(list[JsonValue]):
     __delitem__ = _readonly
     __iadd__ = _readonly
     __imul__ = _readonly
+    __setattr__ = _readonly
     append = _readonly
     clear = _readonly
     extend = _readonly
@@ -164,9 +209,7 @@ def _is_json_value(value: Any) -> bool:
     if value is None or isinstance(value, bool) or isinstance(value, (int, str)):
         return True
     if isinstance(value, float):
-        import math
-
-        return math.isfinite(value)
+        return _math.isfinite(value)
     if isinstance(value, list):
         return all(_is_json_value(x) for x in value)
     if isinstance(value, dict):
@@ -183,7 +226,7 @@ def _freeze_json_value(value: JsonValue) -> JsonValue:
             {key: _freeze_json_value(item) for key, item in value.items()}
         )
     if isinstance(value, list):
-        return _FrozenJsonArray(_freeze_json_value(item) for item in value)
+        return _FrozenJsonArray([_freeze_json_value(item) for item in value])
     return value
 
 
@@ -204,17 +247,11 @@ def _freeze_json_object(
         if required:
             raise TypeError(f"{field_name} must be a JSON object")
         return None
-    if not isinstance(value, dict) or not _is_json_value(value):
+    if not isinstance(value, dict):
         raise TypeError(f"{field_name} must be a JSON object")
+    if not _is_json_value(value):
+        raise TypeError(f"{field_name} must contain only JSON-compatible values")
     return _freeze_json_value(value)  # type: ignore[return-value]
-
-
-def _freeze_required_json_object(value: Any, *, field_name: str) -> JsonObject:
-    return _freeze_json_object(value, field_name=field_name, required=True)  # type: ignore[return-value]
-
-
-def _freeze_optional_json_object(value: Any, *, field_name: str) -> JsonObject | None:
-    return _freeze_json_object(value, field_name=field_name, required=False)
 
 
 def _freeze_field(obj: object, field_name: str, *, required: bool = False) -> None:
@@ -228,9 +265,12 @@ def _freeze_field(obj: object, field_name: str, *, required: bool = False) -> No
     )
 
 
-def _validate_json_object(value: Any, *, field_name: str) -> None:
-    """Validate that value is a JSON object, if present."""
-    _freeze_optional_json_object(value, field_name=field_name)
+def _freeze_extensions_field(obj: object) -> None:
+    """Freeze an extensions field, normalizing an empty mapping to None."""
+    if getattr(obj, "extensions") == {}:
+        object.__setattr__(obj, "extensions", None)
+        return
+    _freeze_field(obj, "extensions")
 
 
 def _validate_int(value: Any, *, field_name: str) -> None:
@@ -282,32 +322,51 @@ def _validate_media(
     if len(provided) != 1:
         raise ValueError(f"{part_type} requires exactly one of data, url, or file_id")
     name, value = provided[0]
+    if not isinstance(value, str):
+        raise TypeError(f"{part_type} {name} must be a string")
     if value == "":
         raise ValueError(f"{part_type} {name} cannot be empty")
 
 
-def _decode_data(part_type: str, data: str | None) -> bytes:
-    """Decode base64 data to bytes."""
-    if not data:
+_BASE64_RE = _re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
+
+
+def _base64_payload(part_type: str, data: str | None) -> str:
+    """Return the base64 payload from a raw base64 string or data URI."""
+    if data is None:
         raise ValueError(
             f"{part_type} has no inline data; fetch url/file_id-addressed media before decoding"
         )
-    if isinstance(data, str) and data.startswith("data:") and ";base64," in data:
+    if not isinstance(data, str):
+        raise TypeError(f"{part_type}.data must be a base64 string")
+    if data == "":
+        raise ValueError(f"{part_type}.data cannot be empty")
+    if data.startswith("data:") and ";base64," in data:
         data = data.split(";base64,", 1)[1]
-    import base64
+    return "".join(data.split())
 
-    return base64.b64decode(data, validate=True)
+
+def _validate_base64_data(part_type: str, data: str | None) -> None:
+    """Validate base64 shape without eagerly decoding large payloads."""
+    payload = _base64_payload(part_type, data)
+    if len(payload) % 4 != 0 or not _BASE64_RE.fullmatch(payload):
+        raise ValueError(f"{part_type}.data must be a valid base64 string")
+
+
+def _decode_data(part_type: str, data: str | None) -> bytes:
+    """Decode base64 data to bytes."""
+    payload = _base64_payload(part_type, data)
+    try:
+        return _base64.b64decode(payload, validate=True)
+    except (_binascii.Error, ValueError) as e:
+        raise ValueError(f"{part_type}.data must be a valid base64 string") from e
 
 
 def _base64_summary(data: str | None) -> str | None:
     """Return a short repr-safe summary for base64 data."""
     if data is None:
         return None
-    payload = (
-        data.split(";base64,", 1)[1]
-        if data.startswith("data:") and ";base64," in data
-        else data
-    )
+    payload = _base64_payload("media", data)
     return f"<base64: {len(payload)} chars>"
 
 
@@ -324,13 +383,14 @@ class _MediaMixin:
     data: str | None = None
     url: str | None = None
     file_id: str | None = None
+    _decoded_bytes: bytes | None = field(default=None, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.media_type, str) or self.media_type == "":
             raise ValueError(f"{self.__class__.__name__} requires media_type")
         _validate_media(self.__class__.__name__, self.data, self.url, self.file_id)
         if self.data is not None:
-            _decode_data(self.__class__.__name__, self.data)
+            _validate_base64_data(self.__class__.__name__, self.data)
 
     def __repr__(self) -> str:
         fields = [
@@ -347,7 +407,9 @@ class _MediaMixin:
 
     @property
     def bytes(self) -> bytes:
-        return _decode_data(self.__class__.__name__, self.data)
+        if self._decoded_bytes is None:
+            object.__setattr__(self, "_decoded_bytes", _decode_data(self.__class__.__name__, self.data))
+        return self._decoded_bytes
 
 
 # ─── Parts ───────────────────────────────────────────────────────────
@@ -422,7 +484,7 @@ class ToolResultPart:
     """The result of an external computation, sent back to the model."""
 
     id: str
-    content: Sequence["Part"]
+    content: tuple[ToolResultContentPart, ...]
     name: str | None = None
     is_error: bool = False
     type: Literal["tool_result"] = field(default="tool_result", init=False)
@@ -463,7 +525,12 @@ class ThinkingPart:
 
 @dataclass(frozen=True, slots=True)
 class RefusalPart:
-    """Model explicitly refused to respond."""
+    """Model explicitly refused to respond.
+
+    Refusals require non-empty text because they are final semantic content;
+    empty ``TextPart``/``ThinkingPart`` values remain allowed for streaming
+    reassembly and provider redaction edge cases.
+    """
 
     text: str
     type: Literal["refusal"] = field(default="refusal", init=False)
@@ -589,9 +656,7 @@ def citation(
 def _encode_data(data: bytes | str) -> str:
     """Ensure data is a base64 string."""
     if isinstance(data, bytes):
-        import base64
-
-        return base64.b64encode(data).decode("ascii")
+        return _base64.b64encode(data).decode("ascii")
     return data
 
 
@@ -622,12 +687,9 @@ def _prepare_media_factory_input(
     if path is not None:
         if str(path) == "":
             raise ValueError(f"{part_type} path cannot be empty")
-        import mimetypes
-        from pathlib import Path
-
         media_path = Path(path)
         data = media_path.read_bytes()
-        media_type = media_type or mimetypes.guess_type(str(media_path))[0]
+        media_type = media_type or _mimetypes.guess_type(str(media_path))[0]
     encoded = _encode_data(data) if data is not None else None
     return encoded, media_type or default_media_type
 
@@ -748,7 +810,9 @@ def tool_result(
     """Create a tool result part.
 
     content can be a sequence of parts, a single part, or a string
-    (which becomes a TextPart).
+    (which becomes a TextPart).  Binary tool results must be wrapped in an
+    appropriate media part (ImagePart/AudioPart/VideoPart/DocumentPart) rather
+    than passed as raw bytes.
     """
     parts = _normalize_parts(content)  # type: ignore[arg-type]
     return ToolResultPart(id=id, content=parts, name=name, is_error=is_error)
@@ -775,10 +839,10 @@ class Message:
     """
 
     role: Role
-    parts: Part | Sequence[Part]
+    parts: tuple[Part, ...]
 
     def __post_init__(self) -> None:
-        if self.role not in {"user", "assistant", "tool", "developer"}:
+        if self.role not in ROLE_VALUES:
             raise ValueError(f"unsupported role: {self.role}")
         if isinstance(self.parts, str):
             raise TypeError("Message.parts must be Part objects; use Message.user('text') for strings")
@@ -881,7 +945,7 @@ def _validate_message_parts(role: Role, parts: tuple[Part, ...]) -> None:
         raise TypeError(f"{role} messages cannot contain model/tool protocol parts")
 
 
-def _normalize_system(system: SystemContent | None) -> str | tuple[Part, ...] | None:
+def _normalize_system(system: SystemContent | None) -> str | tuple[PromptPart, ...] | None:
     if system is None:
         return None
     if isinstance(system, str):
@@ -929,6 +993,8 @@ def _field_is_set(obj: object, field_name: str) -> bool:
     default = _field_default(obj, field_name)
     if default is _MISSING:
         return value is not None
+    if default == () and isinstance(value, (list, tuple)) and len(value) == 0:
+        return False
     return value != default
 
 
@@ -1193,7 +1259,7 @@ class StreamEvent:
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
-        if self.type not in {"start", "delta", "end", "error"}:
+        if self.type not in STREAM_EVENT_TYPES:
             raise ValueError(f"unsupported stream event type: {self.type}")
         owner = f"StreamEvent(type={self.type!r})"
         _require_fields(owner, self, _STREAM_EVENT_REQUIRED_FIELDS.get(self.type, ()))
@@ -1222,12 +1288,19 @@ _JSON_SCHEMA_TYPES: dict[Any, str] = {
 
 
 def _json_schema_for_annotation(annotation: Any) -> JsonObject:
-    """Best-effort JSON Schema for common Python annotations."""
+    """Best-effort JSON Schema for common Python annotations.
+
+    Unknown annotations intentionally become ``{}`` (unconstrained) rather
+    than pretending to be strings.
+    """
     if annotation is Any:
         return {}
 
     origin = get_origin(annotation)
     args = get_args(annotation)
+
+    if origin is Annotated:
+        return _json_schema_for_annotation(args[0])
 
     if origin in (Union, UnionType):
         schemas = [_json_schema_for_annotation(arg) for arg in args]
@@ -1251,7 +1324,7 @@ def _json_schema_for_annotation(annotation: Any) -> JsonObject:
                 schema["type"] = schema_type
         return schema
 
-    if origin in (list, tuple, set):
+    if origin in (list, tuple, set, Sequence):
         schema: JsonObject = {"type": "array"}
         if args:
             schema["items"] = _json_schema_for_annotation(args[0])
@@ -1266,7 +1339,7 @@ def _json_schema_for_annotation(annotation: Any) -> JsonObject:
     json_schema_type = _JSON_SCHEMA_TYPES.get(origin) or _JSON_SCHEMA_TYPES.get(annotation)
     if json_schema_type is not None:
         return {"type": json_schema_type}
-    return {"type": "string"}
+    return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1288,28 +1361,26 @@ class FunctionTool:
     @staticmethod
     def from_fn(fn: Callable[..., Any]) -> "FunctionTool":
         """Infer a serializable tool spec from a callable's signature."""
-        import inspect
-
-        sig = inspect.signature(fn)
-        hints = inspect.get_annotations(fn, eval_str=True)
+        sig = _inspect.signature(fn)
+        hints = _inspect.get_annotations(fn, eval_str=True)
         properties: JsonObject = {}
         required: list[str] = []
         for name, param in sig.parameters.items():
             if param.kind not in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
+                _inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                _inspect.Parameter.KEYWORD_ONLY,
             ):
                 continue
             ann = hints.get(name, str)
             properties[name] = _json_schema_for_annotation(ann)
-            if param.default is inspect.Parameter.empty:
+            if param.default is _inspect.Parameter.empty:
                 required.append(name)
         schema: JsonObject = {"type": "object", "properties": properties}
         if required:
             schema["required"] = required
         return FunctionTool(
             name=fn.__name__,
-            description=(inspect.getdoc(fn) or "").strip() or None,
+            description=(_inspect.getdoc(fn) or "").strip() or None,
             parameters=schema,
         )
 
@@ -1360,6 +1431,11 @@ class Reasoning:
     the response won't exceed max_tokens, and the total won't exceed
     total_budget.
 
+    ``Config(reasoning=None)`` means "do not send an explicit reasoning
+    preference"; ``Config(reasoning=Reasoning())`` means "explicitly force
+    reasoning off."  This tri-state is intentional because some providers
+    and models have their own defaults.
+
     Not all providers support every knob. The adapter maps to the
     closest available mechanism and reports degradation via warnings.
     """
@@ -1369,7 +1445,7 @@ class Reasoning:
     total_budget: int | None = None
 
     def __post_init__(self) -> None:
-        if self.effort not in {"off", "adaptive", "minimal", "low", "medium", "high", "xhigh"}:
+        if self.effort not in REASONING_EFFORTS:
             raise ValueError(f"unsupported reasoning effort: {self.effort}")
         _validate_positive(self.thinking_budget, field_name="thinking_budget")
         _validate_positive(self.total_budget, field_name="total_budget")
@@ -1387,14 +1463,20 @@ class Reasoning:
 
 @dataclass(frozen=True, slots=True)
 class ToolChoice:
-    """How the model should use tools."""
+    """How the model should use tools.
 
-    mode: Literal["auto", "required", "none"] = "auto"
-    allowed: Sequence[str | Tool] | Tool = ()
+    ``allowed`` is stored and exposed as tool names.  Passing Tool objects is
+    accepted as constructor sugar, but they are immediately normalized to
+    names; use ``ToolChoice.from_tools(...)`` when you want that conversion to
+    be explicit at the call site.
+    """
+
+    mode: ToolChoiceMode = "auto"
+    allowed: tuple[str, ...] = ()
     parallel: bool | None = None
 
     def __post_init__(self) -> None:
-        if self.mode not in {"auto", "required", "none"}:
+        if self.mode not in TOOL_CHOICE_MODES:
             raise ValueError(f"unsupported tool choice mode: {self.mode}")
         if isinstance(self.allowed, str):
             raise TypeError("ToolChoice.allowed must be a sequence of tool names, not a string")
@@ -1403,6 +1485,13 @@ class ToolChoice:
             if isinstance(self.allowed, (FunctionTool, BuiltinTool))
             else tuple(self.allowed)
         )
+        if any(isinstance(item, (FunctionTool, BuiltinTool)) for item in raw_allowed):
+            _warnings.warn(
+                "Passing Tool objects to ToolChoice.allowed is deprecated; "
+                "pass tool names or use ToolChoice.from_tools() instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         allowed = tuple(
             item.name if isinstance(item, (FunctionTool, BuiltinTool)) else item
             for item in raw_allowed
@@ -1412,6 +1501,23 @@ class ToolChoice:
             raise ValueError("ToolChoice.allowed must contain non-empty tool names")
         if self.mode == "none" and (self.allowed or self.parallel is not None):
             raise ValueError("ToolChoice(mode='none') cannot specify allowed or parallel")
+
+    @classmethod
+    def from_tools(
+        cls,
+        allowed: Tool | Sequence[Tool | str],
+        *,
+        mode: ToolChoiceMode = "auto",
+        parallel: bool | None = None,
+    ) -> "ToolChoice":
+        """Create a choice by explicitly converting Tool objects to names."""
+        if isinstance(allowed, str):
+            names = (allowed,)
+        elif isinstance(allowed, (FunctionTool, BuiltinTool)):
+            names = (allowed.name,)
+        else:
+            names = tuple(item.name if isinstance(item, (FunctionTool, BuiltinTool)) else item for item in allowed)
+        return cls(mode=mode, allowed=names, parallel=parallel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1427,7 +1533,7 @@ class Config:
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
-    stop: str | Sequence[str] | None = ()
+    stop: tuple[str, ...] = ()
     response_format: JsonObject | None = None
     tool_choice: ToolChoice | None = None
     reasoning: Reasoning | None = None
@@ -1455,7 +1561,7 @@ class Config:
         if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
             raise TypeError("reasoning must be a Reasoning")
         _freeze_field(self, "response_format")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 # ─── Request ─────────────────────────────────────────────────────────
@@ -1468,7 +1574,7 @@ class _ModelRequest:
     model: str
 
     def __post_init__(self) -> None:
-        if not self.model:
+        if not isinstance(self.model, str) or not self.model:
             raise ValueError("model is required")
 
 
@@ -1488,9 +1594,9 @@ class Request(_ModelRequest):
     25% Anthropic write surcharge matters.
     """
 
-    messages: Sequence[Message]
-    system: SystemContent | None = None
-    tools: Sequence[Tool] = ()
+    messages: tuple[Message, ...]
+    system: str | tuple[PromptPart, ...] | None = None
+    tools: tuple[Tool, ...] = ()
     config: Config = field(default_factory=Config)
     cache: bool = True
 
@@ -1537,14 +1643,12 @@ class Usage:
     the invariant always holds.
     """
 
-    # ``total_tokens`` is sentineled with ``-1`` to mean "compute from
-    # input + output" while keeping the field a plain ``int`` for callers
-    # that read it after construction.  After ``__post_init__`` runs,
-    # ``total_tokens`` is always a non-negative ``int`` equal to
-    # ``input_tokens + output_tokens``.
+    # ``None`` means "compute from input + output".  After
+    # ``__post_init__`` runs, ``total_tokens`` is stored as a
+    # non-negative ``int`` equal to ``input_tokens + output_tokens``.
     input_tokens: int = 0
     output_tokens: int = 0
-    total_tokens: int = -1
+    total_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
     reasoning_tokens: int | None = None
@@ -1564,10 +1668,8 @@ class Usage:
             _validate_non_negative(getattr(self, field_name), field_name=field_name)
         _validate_int(self.total_tokens, field_name="total_tokens")
         computed_total = self.input_tokens + self.output_tokens
-        if self.total_tokens == -1:
+        if self.total_tokens is None:
             object.__setattr__(self, "total_tokens", computed_total)
-        elif self.total_tokens < 0:
-            raise ValueError("total_tokens must be >= 0")
         elif self.total_tokens != computed_total:
             raise ValueError("total_tokens must equal input_tokens + output_tokens")
 
@@ -1590,6 +1692,7 @@ class Response:
     finish_reason: FinishReason
     usage: Usage
     provider_data: ProviderData | None = None
+    _parsed_json: Any = field(default=_MISSING, init=False, repr=False, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if self.id == "":
@@ -1600,7 +1703,7 @@ class Response:
             raise TypeError("Response.message must be a Message")
         if self.message.role != "assistant":
             raise ValueError("Response.message must have role 'assistant'")
-        if self.finish_reason not in {"stop", "length", "tool_call", "content_filter", "error"}:
+        if self.finish_reason not in FINISH_REASONS:
             raise ValueError(f"unsupported finish reason: {self.finish_reason}")
         if not isinstance(self.usage, Usage):
             raise TypeError("Response.usage must be a Usage")
@@ -1614,32 +1717,50 @@ class Response:
     def tool_calls(self) -> list[ToolCallPart]:
         return self.message.parts_of(ToolCallPart)
 
-    @property
-    def json(self) -> Any:
-        import json as _json
-        import re
+    def parse_json(self, *, default: Any = _MISSING) -> Any:
+        """Parse text content as JSON.
+
+        Raises ``ValueError`` by default.  Pass ``default=...`` to receive a
+        fallback instead of an exception.  Successful parses are cached.
+        """
+        if self._parsed_json is not _MISSING:
+            return self._parsed_json
 
         t = self.text
         if t is None:
+            if default is not _MISSING:
+                return default
             raise ValueError(
                 "Cannot parse response as JSON: no text content. "
                 f"Parts: {[p.type for p in self.message.parts]}"
             )
         stripped = t.strip()
-        match = re.search(
+        match = _re.search(
             r"```[ \t]*(?:json)?[ \t\r\n]+(.*?)\s*```",
             stripped,
-            re.DOTALL | re.IGNORECASE,
+            _re.DOTALL | _re.IGNORECASE,
         )
         if match:
             stripped = match.group(1).strip()
         try:
-            return _json.loads(stripped)
+            parsed = _json.loads(stripped)
         except _json.JSONDecodeError as e:
+            if default is not _MISSING:
+                return default
             preview = stripped[:200] + ("..." if len(stripped) > 200 else "")
             raise ValueError(
                 f"Cannot parse response as JSON: {e}\nRaw text: {preview}"
             ) from e
+        object.__setattr__(self, "_parsed_json", parsed)
+        return parsed
+
+    @property
+    def json(self) -> Any:
+        """Best-effort parsed JSON, or ``None`` when parsing is impossible.
+
+        Use ``parse_json()`` when parse failures should be reported.
+        """
+        return self.parse_json(default=None)
 
 
 # ─── Embeddings ──────────────────────────────────────────────────────
@@ -1647,7 +1768,7 @@ class Response:
 
 @dataclass(frozen=True, slots=True)
 class EmbeddingRequest(_ModelRequest):
-    inputs: str | Sequence[str]
+    inputs: tuple[str, ...]
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
@@ -1658,7 +1779,7 @@ class EmbeddingRequest(_ModelRequest):
             raise ValueError("inputs cannot be empty")
         if any(not isinstance(x, str) or x == "" for x in self.inputs):
             raise ValueError("inputs must contain non-empty strings")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1684,9 +1805,7 @@ class EmbeddingResponse:
                     raise TypeError(
                         "EmbeddingResponse vector elements must be numeric"
                     )
-                import math
-
-                if isinstance(value, float) and not math.isfinite(value):
+                if isinstance(value, float) and not _math.isfinite(value):
                     raise ValueError(
                         "EmbeddingResponse vector elements must be finite"
                     )
@@ -1727,7 +1846,7 @@ class FileUploadRequest:
             object.__setattr__(self, "bytes_data", bytes(self.bytes_data))
         if not self.media_type:
             raise ValueError("media_type is required")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
     def __repr__(self) -> str:
         return (
@@ -1756,7 +1875,7 @@ class FileUploadResponse:
 
 @dataclass(frozen=True, slots=True)
 class BatchRequest(_ModelRequest):
-    requests: Sequence[Request]
+    requests: tuple[Request, ...]
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
@@ -1769,20 +1888,20 @@ class BatchRequest(_ModelRequest):
         mismatched = [r.model for r in self.requests if r.model != self.model]
         if mismatched:
             raise ValueError("BatchRequest.model must match every nested Request.model")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
 class BatchResponse:
     id: str
-    status: str
+    status: BatchStatus
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
             raise ValueError("BatchResponse requires id")
-        if not self.status:
-            raise ValueError("BatchResponse requires status")
+        if self.status not in BATCH_STATUSES:
+            raise ValueError(f"unsupported batch status: {self.status}")
         _freeze_field(self, "provider_data")
 
 
@@ -1812,15 +1931,24 @@ class ImageGenerationRequest(_PromptRequest):
             not isinstance(self.size, str) or self.size == ""
         ):
             raise ValueError("size cannot be empty")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
 class ImageGenerationResponse:
-    images: Sequence[ImagePart]
+    images: tuple[ImagePart, ...]
+    id: str | None = None
+    model: str | None = None
+    usage: Usage = field(default_factory=Usage)
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
+        if self.id == "":
+            raise ValueError("ImageGenerationResponse.id cannot be empty; use None when unavailable")
+        if self.model == "":
+            raise ValueError("ImageGenerationResponse.model cannot be empty; use None when unavailable")
+        if not isinstance(self.usage, Usage):
+            raise TypeError("ImageGenerationResponse.usage must be a Usage")
         object.__setattr__(self, "images", tuple(self.images))
         if not self.images:
             raise ValueError("ImageGenerationResponse requires at least one image")
@@ -1844,15 +1972,24 @@ class AudioGenerationRequest(_PromptRequest):
             value = getattr(self, field_name)
             if value is not None and (not isinstance(value, str) or value == ""):
                 raise ValueError(f"{field_name} cannot be empty")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 @dataclass(frozen=True, slots=True)
 class AudioGenerationResponse:
     audio: AudioPart
+    id: str | None = None
+    model: str | None = None
+    usage: Usage = field(default_factory=Usage)
     provider_data: ProviderData | None = None
 
     def __post_init__(self) -> None:
+        if self.id == "":
+            raise ValueError("AudioGenerationResponse.id cannot be empty; use None when unavailable")
+        if self.model == "":
+            raise ValueError("AudioGenerationResponse.model cannot be empty; use None when unavailable")
+        if not isinstance(self.usage, Usage):
+            raise TypeError("AudioGenerationResponse.usage must be a Usage")
         if not isinstance(self.audio, AudioPart):
             raise TypeError("audio must be an AudioPart")
         _freeze_field(self, "provider_data")
@@ -1882,17 +2019,15 @@ EndpointResponse: TypeAlias = (
 
 @dataclass(frozen=True, slots=True)
 class AudioFormat:
-    encoding: Literal["pcm16", "opus", "mp3", "aac"]
+    encoding: AudioEncoding
     sample_rate: int
     channels: int = 1
 
     def __post_init__(self) -> None:
-        if self.encoding not in {"pcm16", "opus", "mp3", "aac"}:
+        if self.encoding not in AUDIO_ENCODINGS:
             raise ValueError(f"unsupported audio encoding: {self.encoding}")
-        if self.sample_rate <= 0:
-            raise ValueError("sample_rate must be > 0")
-        if self.channels <= 0:
-            raise ValueError("channels must be > 0")
+        _validate_positive(self.sample_rate, field_name="sample_rate")
+        _validate_positive(self.channels, field_name="channels")
 
 
 # ─── Live (Realtime) ─────────────────────────────────────────────────
@@ -1900,8 +2035,8 @@ class AudioFormat:
 
 @dataclass(frozen=True, slots=True)
 class LiveConfig(_ModelRequest):
-    system: SystemContent | None = None
-    tools: Sequence[Tool] = ()
+    system: str | tuple[PromptPart, ...] | None = None
+    tools: tuple[Tool, ...] = ()
     voice: str | None = None
     input_format: AudioFormat | None = None
     output_format: AudioFormat | None = None
@@ -1920,7 +2055,7 @@ class LiveConfig(_ModelRequest):
             raise TypeError("input_format must be an AudioFormat")
         if self.output_format is not None and not isinstance(self.output_format, AudioFormat):
             raise TypeError("output_format must be an AudioFormat")
-        _freeze_field(self, "extensions")
+        _freeze_extensions_field(self)
 
 
 _LIVE_CLIENT_ALLOWED_FIELDS: dict[str, tuple[str, ...]] = {
@@ -1953,6 +2088,9 @@ _LIVE_SERVER_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
     "audio": ("data",),
     "text": ("text",),
     "tool_call": ("id", "name", "input"),
+    # id/name are optional on deltas because some realtime transports send
+    # them only on the first fragment of a tool call; adapters maintain that
+    # association while clients can still consume empty input_delta chunks.
     "tool_call_delta": ("input_delta",),
     "turn_end": ("usage",),
     "error": ("error",),
@@ -1961,14 +2099,14 @@ _LIVE_SERVER_REQUIRED_FIELDS: dict[str, tuple[str, ...]] = {
 
 @dataclass(frozen=True, slots=True)
 class LiveClientEvent:
-    type: Literal["audio", "video", "text", "tool_result", "interrupt", "end_audio"]
+    type: LiveClientEventType
     data: str | None = None
     text: str | None = None
     id: str | None = None
-    content: Sequence[Part] = ()
+    content: tuple[ToolResultContentPart, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.type not in {"audio", "video", "text", "tool_result", "interrupt", "end_audio"}:
+        if self.type not in LIVE_CLIENT_EVENT_TYPES:
             raise ValueError(f"unsupported live client event type: {self.type}")
         object.__setattr__(self, "content", tuple(self.content))
         owner = f"LiveClientEvent(type={self.type!r})"
@@ -1985,7 +2123,7 @@ class LiveClientEvent:
 
 @dataclass(frozen=True, slots=True)
 class LiveServerEvent:
-    type: Literal["audio", "text", "tool_call", "tool_call_delta", "interrupted", "turn_end", "error"]
+    type: LiveServerEventType
     data: str | None = None
     text: str | None = None
     id: str | None = None
@@ -1996,7 +2134,7 @@ class LiveServerEvent:
     error: ErrorDetail | None = None
 
     def __post_init__(self) -> None:
-        if self.type not in {"audio", "text", "tool_call", "tool_call_delta", "interrupted", "turn_end", "error"}:
+        if self.type not in LIVE_SERVER_EVENT_TYPES:
             raise ValueError(f"unsupported live server event type: {self.type}")
         owner = f"LiveServerEvent(type={self.type!r})"
         _require_fields(owner, self, _LIVE_SERVER_REQUIRED_FIELDS.get(self.type, ()))
@@ -2017,6 +2155,13 @@ class LiveServerEvent:
 
 @dataclass(frozen=True, slots=True)
 class ToolCallInfo:
+    """Backward-compatible callback view of a tool call.
+
+    ``ToolCallPart`` is the canonical tool-call value object.  This wrapper
+    exists for callback APIs that historically omitted the part discriminator;
+    convert explicitly with ``from_part()``/``to_part()`` to avoid shape drift.
+    """
+
     id: str
     name: str
     input: JsonObject
@@ -2027,3 +2172,38 @@ class ToolCallInfo:
         if not self.name:
             raise ValueError("ToolCallInfo requires name")
         _freeze_field(self, "input", required=True)
+
+    @classmethod
+    def from_part(cls, part: ToolCallPart) -> "ToolCallInfo":
+        if not isinstance(part, ToolCallPart):
+            raise TypeError("ToolCallInfo.from_part() requires a ToolCallPart")
+        return cls(id=part.id, name=part.name, input=part.input)
+
+    def to_part(self) -> ToolCallPart:
+        return ToolCallPart(id=self.id, name=self.name, input=self.input)
+
+
+def _check_literal_vocabularies() -> None:
+    checks = (
+        ("PartType", set(get_args(PartType)), set(PART_TYPES)),
+        ("DeltaType", set(get_args(DeltaType)), set(DELTA_TYPES)),
+        ("ErrorCode", set(get_args(ErrorCode)), set(ERROR_CODES)),
+        ("FinishReason", set(get_args(FinishReason)), set(FINISH_REASONS)),
+        ("Role", set(get_args(Role)), set(ROLE_VALUES)),
+        ("StreamEventType", set(get_args(StreamEventType)), set(STREAM_EVENT_TYPES)),
+        ("BatchStatus", set(get_args(BatchStatus)), set(BATCH_STATUSES)),
+        ("AudioEncoding", set(get_args(AudioEncoding)), set(AUDIO_ENCODINGS)),
+        ("ToolChoiceMode", set(get_args(ToolChoiceMode)), set(TOOL_CHOICE_MODES)),
+        ("ReasoningEffort", set(get_args(ReasoningEffort)), set(REASONING_EFFORTS)),
+        ("LiveClientEventType", set(get_args(LiveClientEventType)), set(LIVE_CLIENT_EVENT_TYPES)),
+        ("LiveServerEventType", set(get_args(LiveServerEventType)), set(LIVE_SERVER_EVENT_TYPES)),
+    )
+    for name, literal_values, runtime_values in checks:
+        if literal_values != runtime_values:
+            raise RuntimeError(
+                f"{name} literal values must match runtime vocabulary: "
+                f"literal={sorted(literal_values)} runtime={sorted(runtime_values)}"
+            )
+
+
+_check_literal_vocabularies()
