@@ -86,6 +86,10 @@ ErrorCode = Literal[
     "context_length",
     "timeout",
     "server",
+    "unsupported_model",
+    "unsupported_feature",
+    "not_configured",
+    "transport",
     "provider",
 ]
 ERROR_CODES = frozenset(get_args(ErrorCode))
@@ -1244,7 +1248,7 @@ class StreamDeltaEvent:
             raise TypeError("StreamDeltaEvent.delta must be a Delta")
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class StreamEndEvent:
     """The response stream completed."""
 
@@ -1259,6 +1263,22 @@ class StreamEndEvent:
         if self.usage is not None and not isinstance(self.usage, Usage):
             raise TypeError("StreamEndEvent.usage must be a Usage")
         _validate_json_field(self, "provider_data")
+
+    def __repr__(self) -> str:
+        fields = []
+        if self.finish_reason is not None:
+            fields.append(("finish_reason", repr(self.finish_reason)))
+        if self.usage is not None:
+            fields.append(("usage", repr(self.usage)))
+        if self.provider_data is not None:
+            if isinstance(self.provider_data, dict):
+                fields.append(("provider_data", f"<dict: {len(self.provider_data)} keys>"))
+            else:
+                fields.append(("provider_data", "<present>"))
+        fields.append(("type", repr(self.type)))
+
+        body = ",\n".join(f"    {name}={value}" for name, value in fields)
+        return f"StreamEndEvent(\n{body},\n)"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1548,7 +1568,7 @@ class Usage:
 # ─── Response ────────────────────────────────────────────────────────
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, repr=False)
 class Response:
     """The composed artifact returned by a foundation model.
 
@@ -1577,6 +1597,33 @@ class Response:
             raise TypeError("Response.usage must be a Usage")
         _validate_json_field(self, "provider_data")
 
+    def __repr__(self) -> str:
+        display_text = self.text
+        citations = self.citations
+        if display_text is None and citations:
+            text_parts = [p.text for p in self.message.parts if isinstance(p, TextPart)]
+            if text_parts and all(isinstance(p, (TextPart, CitationPart)) for p in self.message.parts):
+                display_text = "\n".join(text_parts)
+
+        fields = [
+            ("text", repr(display_text)) if display_text is not None else ("message", repr(self.message)),
+            ("model", repr(self.model)),
+            ("finish_reason", repr(self.finish_reason)),
+            ("usage", repr(self.usage)),
+        ]
+        if citations:
+            fields.append(("citations", repr(citations)))
+        if self.id is not None:
+            fields.append(("id", repr(self.id)))
+        if self.provider_data is not None:
+            if isinstance(self.provider_data, dict):
+                fields.append(("provider_data", f"<dict: {len(self.provider_data)} keys>"))
+            else:
+                fields.append(("provider_data", "<present>"))
+
+        body = ",\n".join(f"    {name}={value}" for name, value in fields)
+        return f"Response(\n{body},\n)"
+
     @property
     def text(self) -> str | None:
         return self.message.text
@@ -1584,6 +1631,10 @@ class Response:
     @property
     def tool_calls(self) -> list[ToolCallPart]:
         return self.message.parts_of(ToolCallPart)
+
+    @property
+    def citations(self) -> list[CitationPart]:
+        return self.message.parts_of(CitationPart)
 
     def parse_json(self, *, default: Any = _MISSING) -> Any:
         """Parse the response text as exact JSON."""

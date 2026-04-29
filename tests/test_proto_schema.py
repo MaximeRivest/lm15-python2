@@ -188,3 +188,18 @@ def test_proto_enums_cover_python_literals(tmp_path) -> None:
         "REASONING_EFFORT_HIGH",
         "REASONING_EFFORT_XHIGH",
     ]
+    assert [value.name for value in enums["ErrorCode"].value] == [
+        "ERROR_CODE_UNSPECIFIED",
+        "ERROR_CODE_AUTH",
+        "ERROR_CODE_BILLING",
+        "ERROR_CODE_RATE_LIMIT",
+        "ERROR_CODE_INVALID_REQUEST",
+        "ERROR_CODE_CONTEXT_LENGTH",
+        "ERROR_CODE_TIMEOUT",
+        "ERROR_CODE_SERVER",
+        "ERROR_CODE_PROVIDER",
+        "ERROR_CODE_UNSUPPORTED_MODEL",
+        "ERROR_CODE_UNSUPPORTED_FEATURE",
+        "ERROR_CODE_NOT_CONFIGURED",
+        "ERROR_CODE_TRANSPORT",
+    ]

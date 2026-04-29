@@ -2,8 +2,8 @@
 Transport-level exceptions.
 
 These are distinct from lm15.errors (which are provider-level error taxonomy).
-Transport errors get wrapped/translated by the LM layer into the
-ProviderError hierarchy.
+Provider LMs wrap these lower-level errors into lm15.errors.TransportError.
+They are not provider HTTP/API errors.
 """
 from __future__ import annotations
 

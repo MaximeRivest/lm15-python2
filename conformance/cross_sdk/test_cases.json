@@ -1,0 +1,1357 @@
+{
+  "description": "Cross-SDK curl test cases — auto-generated from curl-fixtures. Uses the canonical lm15 message format for the 'messages' field. Regenerate: python3 cross-sdk-curl-tests/generate_test_cases.py",
+  "cases": [
+    {
+      "id": "openai.basic_text",
+      "model": "gpt-4.1-mini",
+      "prompt": "Say hello."
+    },
+    {
+      "id": "openai.streaming",
+      "model": "gpt-4.1-mini",
+      "prompt": "Hello.",
+      "stream": true
+    },
+    {
+      "id": "openai.system_prompt",
+      "model": "gpt-4.1-mini",
+      "prompt": "Summarize DNA.",
+      "system": "You are terse."
+    },
+    {
+      "id": "openai.temperature",
+      "model": "gpt-4.1-mini",
+      "prompt": "Write a haiku.",
+      "temperature": 0.7,
+      "max_tokens": 50
+    },
+    {
+      "id": "openai.tools",
+      "model": "gpt-4.1-mini",
+      "prompt": "What is the weather in Montreal?",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "openai.image_url",
+      "model": "gpt-4.1-mini",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this image in a few words."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://raw.githubusercontent.com/github/explore/main/topics/react/react.png",
+                "media_type": "image/png",
+                "detail": "low"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai.image_file",
+      "model": "gpt-4.1-mini",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this image in a few words."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://raw.githubusercontent.com/github/explore/main/topics/react/react.png",
+                "media_type": "image/png",
+                "detail": "low"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai.file_input",
+      "model": "gpt-4.1-mini",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What are the two words in this PDF? Reply with only those two words."
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "data": "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjUwIDEwMCBUZAooSGVsbG8gUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMzMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9Sb290IDEgMCBSIC9TaXplIDYgPj4Kc3RhcnR4cmVmCjQwMQolJUVPRgo=",
+                "media_type": "application/pdf"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai.multi_turn",
+      "model": "gpt-4.1-mini",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is 2 + 2? Reply with one word."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "four"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Repeat your previous answer in uppercase."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai.multi_turn_tool_result",
+      "model": "gpt-4.1-mini",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is the weather in Montreal?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool_call",
+              "id": "call_weather_montreal",
+              "name": "get_weather",
+              "arguments": {
+                "city": "Montreal"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "parts": [
+            {
+              "type": "tool_result",
+              "id": "call_weather_montreal",
+              "content": "Montreal is 12 C and sunny."
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "openai.tool_choice_auto",
+      "model": "gpt-4.1-mini",
+      "prompt": "What is the weather in Montreal?",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": "auto"
+      }
+    },
+    {
+      "id": "openai.tool_choice_required",
+      "model": "gpt-4.1-mini",
+      "prompt": "What is the weather in Montreal? Use the tool.",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": "required"
+      }
+    },
+    {
+      "id": "openai.tool_choice_none",
+      "model": "gpt-4.1-mini",
+      "prompt": "Say hello without using any tool.",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": "none"
+      }
+    },
+    {
+      "id": "openai.tool_choice_specific",
+      "model": "gpt-4.1-mini",
+      "prompt": "Get the weather in Montreal.",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "function",
+          "name": "get_weather"
+        }
+      }
+    },
+    {
+      "id": "openai.parallel_tool_calls",
+      "model": "gpt-4.1-mini",
+      "prompt": "Call both get_temperature_montreal and get_humidity_montreal now. Do not answer with plain text.",
+      "tools": [
+        {
+          "name": "get_temperature_montreal",
+          "description": "Get the current temperature in Montreal",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        },
+        {
+          "name": "get_humidity_montreal",
+          "description": "Get the current humidity in Montreal",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": "required",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "openai.max_tool_calls",
+      "model": "gpt-4.1-mini",
+      "prompt": "Use web search to verify which city the Eiffel Tower is in. Answer with just the city name.",
+      "builtin_tools": [
+        {
+          "name": "web_search",
+          "builtin_config": {
+            "search_context_size": "low"
+          }
+        }
+      ],
+      "provider": {
+        "max_tool_calls": 1
+      }
+    },
+    {
+      "id": "openai.structured_output",
+      "model": "gpt-4.1-mini",
+      "prompt": "Return a cookie recipe as JSON.",
+      "provider": {
+        "text": {
+          "format": {
+            "type": "json_schema",
+            "name": "recipe",
+            "strict": true,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "ingredients": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "ingredients"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "openai.structured_output_json_object",
+      "model": "gpt-4.1-mini",
+      "prompt": "Respond with a JSON object containing keys title and summary about DNA.",
+      "provider": {
+        "text": {
+          "format": {
+            "type": "json_object"
+          }
+        }
+      }
+    },
+    {
+      "id": "openai.top_p",
+      "model": "gpt-4.1-mini",
+      "prompt": "Write one short slogan about science.",
+      "provider": {
+        "top_p": 0.8
+      }
+    },
+    {
+      "id": "openai.reasoning",
+      "model": "gpt-5-mini",
+      "prompt": "What is 143 times 27? Reply with just the number.",
+      "provider": {
+        "reasoning": {
+          "effort": "low"
+        }
+      }
+    },
+    {
+      "id": "openai.web_search",
+      "model": "gpt-5.4",
+      "prompt": "What was one positive news story from today? Reply in one sentence.",
+      "builtin_tools": [
+        {
+          "name": "web_search",
+          "builtin_config": {
+            "search_context_size": "low"
+          }
+        }
+      ]
+    },
+    {
+      "id": "openai.code_interpreter",
+      "model": "gpt-5.4",
+      "prompt": "Use Python in the code interpreter to compute the SHA256 hash of the exact string 'curl-fixtures-2026-04-13'. Reply with only the lowercase hex digest.",
+      "builtin_tools": [
+        {
+          "name": "code_execution",
+          "builtin_config": {
+            "container": {
+              "type": "auto"
+            }
+          }
+        }
+      ],
+      "provider": {
+        "include": [
+          "code_interpreter_call.outputs"
+        ]
+      }
+    },
+    {
+      "id": "anthropic.basic_text",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Say hello.",
+      "max_tokens": 1024
+    },
+    {
+      "id": "anthropic.streaming",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Hello.",
+      "max_tokens": 256,
+      "stream": true
+    },
+    {
+      "id": "anthropic.system_prompt",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Summarize DNA.",
+      "system": "You are terse.",
+      "max_tokens": 1024
+    },
+    {
+      "id": "anthropic.temperature",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Write one short slogan about science.",
+      "max_tokens": 256,
+      "temperature": 0.2
+    },
+    {
+      "id": "anthropic.max_tokens",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Say hello.",
+      "max_tokens": 100
+    },
+    {
+      "id": "anthropic.tools",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What is the weather in Montreal?",
+      "max_tokens": 1024,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "anthropic.image_base64",
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this image in a few words. It is a website icon."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAQklEQVR4nGP8//8/Ay0BE01NH7Vg1AKqABacMoyMJBuGLUsN/SAatWDUglELRi0YtYAaAHeFQ6UG2dAPolELBt4CAIoVBz94d1SyAAAAAElFTkSuQmCC"
+              }
+            }
+          ]
+        }
+      ],
+      "max_tokens": 512
+    },
+    {
+      "id": "anthropic.image_url",
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this image in a few words."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "media_type": "image/png",
+                "url": "https://github.githubassets.com/favicons/favicon.png"
+              }
+            }
+          ]
+        }
+      ],
+      "max_tokens": 512
+    },
+    {
+      "id": "anthropic.pdf_base64",
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What are the two words in this PDF? Reply with only those two words."
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjUwIDEwMCBUZAooSGVsbG8gUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMzMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9Sb290IDEgMCBSIC9TaXplIDYgPj4Kc3RhcnR4cmVmCjQwMQolJUVPRgo="
+              }
+            }
+          ]
+        }
+      ],
+      "max_tokens": 512
+    },
+    {
+      "id": "anthropic.multi_turn",
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is 2 + 2? Reply with one word."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "four"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Repeat your previous answer in uppercase."
+            }
+          ]
+        }
+      ],
+      "max_tokens": 32
+    },
+    {
+      "id": "anthropic.multi_turn_tool_result",
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is 2 + 2? Use the calculator tool, then answer in one word."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool_call",
+              "id": "toolu_calc_2_plus_2",
+              "name": "calculator",
+              "arguments": {
+                "expression": "2 + 2"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "parts": [
+            {
+              "type": "tool_result",
+              "id": "toolu_calc_2_plus_2",
+              "content": "4"
+            }
+          ]
+        }
+      ],
+      "max_tokens": 128,
+      "tools": [
+        {
+          "name": "calculator",
+          "description": "Evaluate a basic arithmetic expression",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "expression": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "anthropic.tool_choice_auto",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What is the weather in Montreal?",
+      "max_tokens": 1024,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "auto"
+        }
+      }
+    },
+    {
+      "id": "anthropic.tool_choice_any",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What is the weather in Montreal? Use the tool.",
+      "max_tokens": 1024,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "any",
+          "disable_parallel_tool_use": true
+        }
+      }
+    },
+    {
+      "id": "anthropic.tool_choice_specific",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Get the weather in Montreal.",
+      "max_tokens": 1024,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "tool",
+          "name": "get_weather",
+          "disable_parallel_tool_use": true
+        }
+      }
+    },
+    {
+      "id": "anthropic.tool_choice_none",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Say hello without using any tool.",
+      "max_tokens": 1024,
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "none"
+        }
+      }
+    },
+    {
+      "id": "anthropic.stop_sequences",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Count upward from 1 using digits separated by commas and no spaces.",
+      "max_tokens": 32,
+      "provider": {
+        "stop_sequences": [
+          "4"
+        ]
+      }
+    },
+    {
+      "id": "anthropic.top_p",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Write one short slogan about science.",
+      "max_tokens": 256,
+      "provider": {
+        "top_p": 0.8
+      }
+    },
+    {
+      "id": "anthropic.top_k",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Name one primary color.",
+      "max_tokens": 32,
+      "provider": {
+        "top_k": 5
+      }
+    },
+    {
+      "id": "anthropic.thinking",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What is 143 times 27? Think carefully.",
+      "max_tokens": 1400,
+      "provider": {
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 1024,
+          "display": "summarized"
+        }
+      }
+    },
+    {
+      "id": "anthropic.thinking_budget",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What is 143 times 27? Think carefully.",
+      "max_tokens": 1400,
+      "provider": {
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 1024,
+          "display": "summarized"
+        }
+      }
+    },
+    {
+      "id": "anthropic.output_config",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Return a JSON object matching the schema with animal set to cat.",
+      "max_tokens": 128,
+      "provider": {
+        "output_config": {
+          "format": {
+            "type": "json_schema",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "animal": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "animal"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "anthropic.web_search",
+      "model": "claude-sonnet-4-5",
+      "prompt": "What was one positive news story from today? Reply in one sentence.",
+      "max_tokens": 1024,
+      "builtin_tools": [
+        {
+          "name": "web_search"
+        }
+      ]
+    },
+    {
+      "id": "anthropic.container",
+      "model": "claude-sonnet-4-5",
+      "prompt": "Use the code_execution tool to calculate 2 + 2 and report the result.",
+      "max_tokens": 512,
+      "builtin_tools": [
+        {
+          "name": "code_execution"
+        }
+      ],
+      "provider": {
+        "tool_choice": {
+          "type": "tool",
+          "name": "code_execution",
+          "disable_parallel_tool_use": true
+        }
+      }
+    },
+    {
+      "id": "gemini.basic_text",
+      "model": "gemini-2.5-flash",
+      "prompt": "Say hello."
+    },
+    {
+      "id": "gemini.streaming",
+      "model": "gemini-2.5-flash",
+      "prompt": "Hello.",
+      "stream": true
+    },
+    {
+      "id": "gemini.system_prompt",
+      "model": "gemini-2.5-flash",
+      "prompt": "Summarize DNA.",
+      "system": "You are terse."
+    },
+    {
+      "id": "gemini.tools",
+      "model": "gemini-2.5-flash",
+      "prompt": "What is the weather in Montreal?",
+      "tools": [
+        {
+          "name": "get_weather",
+          "description": "Get the current weather for a city",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "gemini.image_inline",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this image in a few words. It is a website icon."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "base64",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAQklEQVR4nGP8//8/Ay0BE01NH7Vg1AKqABacMoyMJBuGLUsN/SAatWDUglELRi0YtYAaAHeFQ6UG2dAPolELBt4CAIoVBz94d1SyAAAAAElFTkSuQmCC",
+                "media_type": "image/png"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.image_file_uri",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is shown in this image? Answer in a few words."
+            },
+            {
+              "type": "image",
+              "source": {
+                "type": "url",
+                "url": "https://storage.googleapis.com/cloud-samples-data/generative-ai/image/scones.jpg",
+                "media_type": "image/jpeg"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.audio_inline",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this audio briefly."
+            },
+            {
+              "type": "audio",
+              "source": {
+                "type": "base64",
+                "data": "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",
+                "media_type": "audio/wav"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.video_file",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Describe this video in one short sentence."
+            },
+            {
+              "type": "video",
+              "source": {
+                "type": "url",
+                "url": "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+                "media_type": "video/mp4"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.pdf_inline",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What are the two words in this PDF? Reply with only those two words."
+            },
+            {
+              "type": "document",
+              "source": {
+                "type": "base64",
+                "data": "JVBERi0xLjEKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCAyMDAgMjAwXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAwIFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA0MSA+PgpzdHJlYW0KQlQKL0YxIDI0IFRmCjUwIDEwMCBUZAooSGVsbG8gUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCjUgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMzMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9Sb290IDEgMCBSIC9TaXplIDYgPj4Kc3RhcnR4cmVmCjQwMQolJUVPRgo=",
+                "media_type": "application/pdf"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.multi_turn",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is 2 + 2? Reply with one word."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "four"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Repeat your previous answer in uppercase. Reply with one word."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "gemini.multi_turn_function_response",
+      "model": "gemini-2.5-flash",
+      "messages": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "What is 2 + 2? Use the calculator tool, then answer in one word."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "tool_call",
+              "id": "call_calc_2_plus_2",
+              "name": "calculator",
+              "arguments": {
+                "expression": "2 + 2"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "parts": [
+            {
+              "type": "tool_result",
+              "id": "call_calc_2_plus_2",
+              "content": "4",
+              "name": "calculator"
+            }
+          ]
+        }
+      ],
+      "tools": [
+        {
+          "name": "calculator",
+          "description": "Evaluate a basic arithmetic expression",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "expression": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "expression"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "gemini.temperature",
+      "model": "gemini-2.5-flash",
+      "prompt": "Write one short slogan about science.",
+      "provider": {
+        "generationConfig": {
+          "temperature": 1,
+          "topP": 0.8
+        }
+      }
+    },
+    {
+      "id": "gemini.max_output_tokens",
+      "model": "gemini-2.5-flash",
+      "prompt": "Count from 1 to 20, separated by spaces.",
+      "max_tokens": 8
+    },
+    {
+      "id": "gemini.top_p",
+      "model": "gemini-2.5-flash",
+      "prompt": "Write one short slogan about science.",
+      "provider": {
+        "generationConfig": {
+          "topP": 0.8
+        }
+      }
+    },
+    {
+      "id": "gemini.top_k",
+      "model": "gemini-2.5-flash",
+      "prompt": "Write one short slogan about science.",
+      "provider": {
+        "generationConfig": {
+          "topK": 10
+        }
+      }
+    },
+    {
+      "id": "gemini.stop_sequences",
+      "model": "gemini-2.5-flash",
+      "prompt": "Repeat exactly: alpha STOP beta",
+      "stop": [
+        "STOP"
+      ]
+    },
+    {
+      "id": "gemini.response_mime_type",
+      "model": "gemini-2.5-flash",
+      "prompt": "Respond with a JSON object containing keys title and summary about DNA.",
+      "provider": {
+        "generationConfig": {
+          "responseMimeType": "application/json"
+        }
+      }
+    },
+    {
+      "id": "gemini.response_schema",
+      "model": "gemini-2.5-flash",
+      "prompt": "List a few popular cookie recipes.",
+      "provider": {
+        "generationConfig": {
+          "responseMimeType": "application/json",
+          "responseSchema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "recipeName": {
+                  "type": "string"
+                },
+                "ingredients": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "recipeName",
+                "ingredients"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini.thinking",
+      "model": "gemini-2.5-flash",
+      "prompt": "What is 143 times 27? Think carefully.",
+      "provider": {
+        "generationConfig": {
+          "thinkingConfig": {
+            "includeThoughts": true,
+            "thinkingBudget": 256
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini.tool_config_auto",
+      "model": "gemini-2.5-flash",
+      "prompt": "I have 57 cats, each owns 44 mittens, how many mittens is that in total?",
+      "tools": [
+        {
+          "name": "multiplyNumbers",
+          "description": "Multiply two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "AUTO"
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini.tool_config_any",
+      "model": "gemini-2.5-flash",
+      "prompt": "I have 57 cats, each owns 44 mittens, how many mittens is that in total?",
+      "tools": [
+        {
+          "name": "multiplyNumbers",
+          "description": "Multiply two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "ANY"
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini.tool_config_none",
+      "model": "gemini-2.5-flash",
+      "prompt": "I have 57 cats, each owns 44 mittens, how many mittens is that in total?",
+      "tools": [
+        {
+          "name": "multiplyNumbers",
+          "description": "Multiply two numbers",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "a": {
+                "type": "number"
+              },
+              "b": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "a",
+              "b"
+            ]
+          }
+        }
+      ],
+      "provider": {
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "NONE"
+          }
+        }
+      }
+    },
+    {
+      "id": "gemini.google_search",
+      "model": "gemini-2.5-flash",
+      "prompt": "What was one positive news story from today? Reply in one sentence.",
+      "builtin_tools": [
+        {
+          "name": "web_search"
+        }
+      ]
+    },
+    {
+      "id": "gemini.code_execution",
+      "model": "gemini-2.5-flash",
+      "prompt": "Use code execution to calculate the sum of the first 10 prime numbers. Return only the final number.",
+      "builtin_tools": [
+        {
+          "name": "code_execution"
+        }
+      ]
+    }
+  ]
+}

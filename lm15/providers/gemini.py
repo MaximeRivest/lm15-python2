@@ -18,6 +18,7 @@ from ..errors import (
     RateLimitError,
     ServerError,
     TimeoutError,
+    UnsupportedModelError,
     canonical_error_code,
     map_http_error,
 )
@@ -35,6 +36,7 @@ from ..types import (
     BatchResponse,
     BinaryPart,
     BuiltinTool,
+    CitationPart,
     Config,
     DocumentPart,
     EmbeddingRequest,
@@ -89,6 +91,23 @@ _GEMINI_BUILTIN_MAP: dict[str, str] = {
     "code_execution": "codeExecution",
 }
 
+GEMINI_PROVIDER_EXECUTED_PART_KEYS = {
+    "executableCode",
+    "codeExecutionResult",
+}
+
+
+def _attach_unmapped(provider_data: dict[str, Any], unmapped: list[dict[str, str]]) -> dict[str, Any]:
+    if not unmapped:
+        return provider_data
+    out = dict(provider_data)
+    out["_lm15_unmapped"] = unmapped
+    return out
+
+
+def _record_unmapped(unmapped: list[dict[str, str]], path: str, typ: Any) -> None:
+    unmapped.append({"path": path, "type": str(typ or "<missing>")})
+
 
 def _builtin_to_gemini(tool: BuiltinTool) -> dict[str, Any]:
     return {_GEMINI_BUILTIN_MAP.get(tool.name, tool.name): tool.config or {}}
@@ -114,6 +133,73 @@ def _batch_status(status: str) -> str:
     if status in {"queued", "validating"}:
         return "queued"
     return "submitted"
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _gemini_segment_text(segment: dict[str, Any], full_text: str) -> str | None:
+    text = segment.get("text")
+    if isinstance(text, str) and text:
+        return text
+    start = _int_or_none(segment.get("startIndex"))
+    end = _int_or_none(segment.get("endIndex"))
+    if start is not None and end is not None and 0 <= start < end <= len(full_text):
+        return full_text[start:end]
+    return None
+
+
+def _gemini_grounding_chunk(chunks: list[Any], index: Any) -> dict[str, Any]:
+    idx = _int_or_none(index)
+    if idx is None or idx < 0 or idx >= len(chunks):
+        return {}
+    chunk = chunks[idx]
+    return chunk if isinstance(chunk, dict) else {}
+
+
+def _gemini_citations(candidate: dict[str, Any], full_text: str) -> list[CitationPart]:
+    grounding = candidate.get("groundingMetadata")
+    if not isinstance(grounding, dict):
+        return []
+
+    chunks = grounding.get("groundingChunks") or []
+    if not isinstance(chunks, list):
+        chunks = []
+    supports = grounding.get("groundingSupports") or []
+    if not isinstance(supports, list):
+        return []
+
+    citations: list[CitationPart] = []
+    seen: set[tuple[str | None, str | None, str | None]] = set()
+    for support in supports:
+        if not isinstance(support, dict):
+            continue
+        segment = support.get("segment") if isinstance(support.get("segment"), dict) else {}
+        cited_text = _gemini_segment_text(segment, full_text)
+        indices = support.get("groundingChunkIndices") or []
+        if not isinstance(indices, list):
+            continue
+        for index in indices:
+            chunk = _gemini_grounding_chunk(chunks, index)
+            source = chunk.get("web") or chunk.get("retrievedContext") or chunk.get("googleSearch") or {}
+            if not isinstance(source, dict):
+                source = {}
+            url = source.get("uri") or source.get("url")
+            title = source.get("title") or source.get("name")
+            url_s = str(url) if url else None
+            title_s = str(title) if title else None
+            key = (url_s, title_s, cited_text)
+            if key in seen or (url_s is None and title_s is None and cited_text is None):
+                continue
+            seen.add(key)
+            citations.append(CitationPart(url=url_s, title=title_s, text=cited_text))
+    return citations
 
 
 @dataclass(slots=True)
@@ -170,6 +256,22 @@ class GeminiLM(BaseProviderLM):
         )
 
     @staticmethod
+    def _is_model_error(message: str) -> bool:
+        lowered = message.lower()
+        return "model" in lowered and any(
+            marker in lowered
+            for marker in (
+                "not found",
+                "does not exist",
+                "not exist",
+                "not supported",
+                "unsupported",
+                "not available",
+                "unknown",
+            )
+        )
+
+    @staticmethod
     def _is_candidate_finish_error(finish_reason: str) -> bool:
         return finish_reason in {
             "SAFETY",
@@ -194,6 +296,8 @@ class GeminiLM(BaseProviderLM):
         cls = self._error_status_map.get(provider_code, ProviderError)
         if self._is_context_length_message(message):
             cls = ContextLengthError
+        elif provider_code == "NOT_FOUND" and self._is_model_error(message):
+            cls = UnsupportedModelError
         return ErrorDetail(
             code=canonical_error_code(cls),
             message=message or provider_code or "provider error",
@@ -205,14 +309,22 @@ class GeminiLM(BaseProviderLM):
         if isinstance(prompt_feedback, dict):
             block_reason = str(prompt_feedback.get("blockReason") or "")
             if block_reason and block_reason != "BLOCK_REASON_UNSPECIFIED":
-                return InvalidRequestError(f"Prompt blocked: {block_reason}")
+                return self._provider_error(
+                    InvalidRequestError,
+                    f"Prompt blocked: {block_reason}",
+                    provider_code="promptFeedback",
+                )
 
         candidate = (data.get("candidates") or [{}])[0]
         if isinstance(candidate, dict):
             finish_reason = str(candidate.get("finishReason") or "")
             if self._is_candidate_finish_error(finish_reason):
                 finish_message = str(candidate.get("finishMessage") or "")
-                return InvalidRequestError(finish_message or f"Candidate blocked: {finish_reason}")
+                return self._provider_error(
+                    InvalidRequestError,
+                    finish_message or f"Candidate blocked: {finish_reason}",
+                    provider_code=finish_reason or "finishReason",
+                )
         return None
 
     def normalize_error(self, status: int, body: str) -> ProviderError:
@@ -222,15 +334,39 @@ class GeminiLM(BaseProviderLM):
             msg = err.get("message", "") if isinstance(err, dict) else str(err)
             err_status = str(err.get("status") or "") if isinstance(err, dict) else ""
             if self._is_context_length_message(msg):
-                return ContextLengthError(msg)
+                return self._provider_error(
+                    ContextLengthError,
+                    msg,
+                    status=status,
+                    provider_code=err_status or None,
+                )
+            if err_status == "NOT_FOUND" and self._is_model_error(msg):
+                return self._provider_error(
+                    UnsupportedModelError,
+                    msg,
+                    status=status,
+                    provider_code=err_status,
+                )
             cls = self._error_status_map.get(err_status)
             if cls:
-                return cls(msg)
+                return self._provider_error(
+                    cls,
+                    msg,
+                    status=status,
+                    provider_code=err_status or None,
+                )
             if err_status and err_status not in msg:
                 msg = f"{msg} ({err_status})"
         except Exception:
             msg = body.strip()[:500] or f"HTTP {status}"
-        return map_http_error(status, msg)
+            err_status = ""
+        return map_http_error(
+            status,
+            msg,
+            provider=self.provider,
+            env_keys=self.manifest.env_keys,
+            provider_code=err_status or None,
+        )
 
     # ─── Request serialization ──────────────────────────────────────
 
@@ -398,9 +534,19 @@ class GeminiLM(BaseProviderLM):
 
     # ─── Response parsing ───────────────────────────────────────────
 
-    def _parse_candidate_parts(self, parts_payload: list[dict[str, Any]]) -> list[Any]:
+    def _parse_candidate_parts(
+        self,
+        parts_payload: list[dict[str, Any]],
+        *,
+        unmapped: list[dict[str, str]] | None = None,
+        path_prefix: str = "parts",
+    ) -> list[Any]:
         parts: list[Any] = []
-        for part in parts_payload:
+        for part_index, part in enumerate(parts_payload):
+            if not isinstance(part, dict):
+                if unmapped is not None:
+                    _record_unmapped(unmapped, f"{path_prefix}[{part_index}]", type(part).__name__)
+                continue
             if "thought" in part and part.get("thought") and part.get("text"):
                 parts.append(ThinkingPart(text=str(part.get("text") or "")))
             elif "text" in part:
@@ -436,6 +582,10 @@ class GeminiLM(BaseProviderLM):
                     parts.append(AudioPart(media_type=mime, url=uri))
                 else:
                     parts.append(DocumentPart(media_type=mime, url=uri))
+            elif any(key in part for key in GEMINI_PROVIDER_EXECUTED_PART_KEYS):
+                continue
+            elif unmapped is not None:
+                _record_unmapped(unmapped, f"{path_prefix}[{part_index}]", "+".join(sorted(part)) or "<empty>")
         return parts
 
     def parse_response(self, request: Request, response: HttpResponse) -> Response:
@@ -446,7 +596,14 @@ class GeminiLM(BaseProviderLM):
         candidate = (data.get("candidates") or [{}])[0]
         candidate = candidate if isinstance(candidate, dict) else {}
         content = candidate.get("content", {}) if isinstance(candidate.get("content"), dict) else {}
-        parts = self._parse_candidate_parts(content.get("parts", []) or [])
+        unmapped: list[dict[str, str]] = []
+        parts = self._parse_candidate_parts(
+            content.get("parts", []) or [],
+            unmapped=unmapped,
+            path_prefix="candidates[0].content.parts",
+        )
+        full_text = "".join(part.text for part in parts if isinstance(part, TextPart))
+        parts.extend(_gemini_citations(candidate, full_text))
         if not parts:
             parts = [TextPart(text="")]
         usage_payload = data.get("usageMetadata") or {}
@@ -464,7 +621,7 @@ class GeminiLM(BaseProviderLM):
             message=Message.assistant(tuple(parts)),
             finish_reason=_finish_reason(candidate.get("finishReason"), has_tool_call=has_tool),
             usage=usage,
-            provider_data=data,
+            provider_data=_attach_unmapped(data, unmapped),
         )
 
     def parse_stream_event(self, request: Request, raw_event: SSEEvent) -> StreamEvent | None:
@@ -606,7 +763,7 @@ class GeminiLM(BaseProviderLM):
         if self._should_use_live_completion(request):
             yield from self._stream_via_live_completion(request)
             return
-        yield from super(GeminiLM, self).stream(request)
+        yield from BaseProviderLM.stream(self, request)
 
     def _should_use_live_completion(self, request: Request) -> bool:
         extensions = request.config.extensions or {}
@@ -818,7 +975,12 @@ class GeminiLM(BaseProviderLM):
             if isinstance(payload, dict) and "error" in payload:
                 err = payload["error"]
                 msg = err.get("message", "") if isinstance(err, dict) else str(err)
-                raise InvalidRequestError(f"Live setup failed: {msg}")
+                provider_code = str(err.get("status") or "live_setup") if isinstance(err, dict) else "live_setup"
+                raise self._provider_error(
+                    InvalidRequestError,
+                    f"Live setup failed: {msg}",
+                    provider_code=provider_code,
+                )
 
     def _live_url(self) -> str:
         parsed = urllib.parse.urlparse(self.base_url)

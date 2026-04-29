@@ -14,6 +14,7 @@ from ..errors import (
     RateLimitError,
     ServerError,
     TimeoutError,
+    UnsupportedModelError,
     canonical_error_code,
     map_http_error,
 )
@@ -26,6 +27,7 @@ from ..types import (
     BatchResponse,
     BuiltinTool,
     CitationDelta,
+    CitationPart,
     DocumentPart,
     ErrorDetail,
     FileUploadRequest,
@@ -58,6 +60,24 @@ _ANTHROPIC_BUILTIN_MAP: dict[str, str] = {
     "code_execution": "code_execution_20250522",
 }
 
+ANTHROPIC_PROVIDER_EXECUTED_BLOCKS = {
+    "server_tool_use",
+    "web_search_tool_result",
+    "code_execution_tool_result",
+}
+
+
+def _attach_unmapped(provider_data: dict[str, Any], unmapped: list[dict[str, str]]) -> dict[str, Any]:
+    if not unmapped:
+        return provider_data
+    out = dict(provider_data)
+    out["_lm15_unmapped"] = unmapped
+    return out
+
+
+def _record_unmapped(unmapped: list[dict[str, str]], path: str, typ: Any) -> None:
+    unmapped.append({"path": path, "type": str(typ or "<missing>")})
+
 
 def _builtin_to_anthropic(tool: BuiltinTool) -> dict[str, Any]:
     out: dict[str, Any] = {"type": _ANTHROPIC_BUILTIN_MAP.get(tool.name, tool.name), "name": tool.name}
@@ -88,6 +108,18 @@ def _batch_status(status: str) -> str:
     if status in {"queued", "validating"}:
         return "queued"
     return "submitted"
+
+
+def _citation_from_anthropic(citation: dict[str, Any]) -> CitationPart | None:
+    url = citation.get("url") or citation.get("uri")
+    title = citation.get("title") or citation.get("document_title") or citation.get("source_title")
+    text = citation.get("cited_text") or citation.get("text") or citation.get("quote")
+    url_s = str(url) if url else None
+    title_s = str(title) if title else None
+    text_s = str(text) if text else None
+    if url_s is None and title_s is None and text_s is None:
+        return None
+    return CitationPart(url=url_s, title=title_s, text=text_s)
 
 
 @dataclass(slots=True)
@@ -137,10 +169,28 @@ class AnthropicLM(BaseProviderLM):
             or ("token" in lowered and ("limit" in lowered or "exceed" in lowered))
         )
 
+    @staticmethod
+    def _is_model_error(message: str) -> bool:
+        lowered = message.lower()
+        return "model" in lowered and any(
+            marker in lowered
+            for marker in (
+                "not found",
+                "does not exist",
+                "not exist",
+                "not supported",
+                "unsupported",
+                "not available",
+                "unknown",
+            )
+        )
+
     def _error_detail(self, provider_code: str, message: str) -> ErrorDetail:
         cls = self._error_type_map.get(provider_code, ProviderError)
-        if provider_code == "invalid_request_error" and self._is_context_length_message(message):
+        if self._is_context_length_message(message):
             cls = ContextLengthError
+        elif provider_code == "not_found_error" and self._is_model_error(message):
+            cls = UnsupportedModelError
         return ErrorDetail(
             code=canonical_error_code(cls),
             message=message or provider_code or "provider error",
@@ -155,30 +205,59 @@ class AnthropicLM(BaseProviderLM):
             err_type = str(err.get("type") or "") if isinstance(err, dict) else ""
             request_id = str(data.get("request_id") or "") if isinstance(data, dict) else ""
 
-            if err_type == "invalid_request_error" and self._is_context_length_message(msg):
-                if request_id and request_id not in msg:
-                    msg = f"{msg} (request_id={request_id})"
-                return ContextLengthError(msg)
+            if self._is_context_length_message(msg):
+                return self._provider_error(
+                    ContextLengthError,
+                    msg,
+                    status=status,
+                    provider_code=err_type or None,
+                    request_id=request_id or None,
+                )
+            if err_type == "not_found_error" and self._is_model_error(msg):
+                return self._provider_error(
+                    UnsupportedModelError,
+                    msg,
+                    status=status,
+                    provider_code=err_type,
+                    request_id=request_id or None,
+                )
 
             cls = self._error_type_map.get(err_type)
             if cls:
-                if request_id and request_id not in msg:
-                    msg = f"{msg} (request_id={request_id})"
-                return cls(msg)
+                return self._provider_error(
+                    cls,
+                    msg,
+                    status=status,
+                    provider_code=err_type or None,
+                    request_id=request_id or None,
+                )
             if err_type and err_type not in msg:
                 msg = f"{msg} ({err_type})"
-            if request_id and request_id not in msg:
-                msg = f"{msg} (request_id={request_id})"
         except Exception:
             msg = body.strip()[:500] or f"HTTP {status}"
-        return map_http_error(status, msg)
+            err_type = ""
+            request_id = ""
+        return map_http_error(
+            status,
+            msg,
+            provider=self.provider,
+            env_keys=self.manifest.env_keys,
+            provider_code=err_type or None,
+            request_id=request_id or None,
+        )
 
-    def _headers(self) -> dict[str, str]:
-        return {
+    def _headers(self, request: Request | None = None) -> dict[str, str]:
+        headers = {
             "x-api-key": self.api_key,
             "anthropic-version": self.api_version,
             "content-type": "application/json",
         }
+        if request is not None and any(
+            isinstance(tool, BuiltinTool) and tool.name == "code_execution"
+            for tool in request.tools
+        ):
+            headers["anthropic-beta"] = "code-execution-2025-05-22"
+        return headers
 
     # ─── Request serialization ──────────────────────────────────────
 
@@ -197,7 +276,10 @@ class AnthropicLM(BaseProviderLM):
             if content_blocks:
                 # Anthropic accepts either a string or content blocks.  Blocks
                 # preserve image/document tool outputs when present.
-                out["content"] = content_blocks
+                if len(content_blocks) == 1 and content_blocks[0].get("type") == "text":
+                    out["content"] = content_blocks[0]["text"]
+                else:
+                    out["content"] = content_blocks
             if part.is_error:
                 out["is_error"] = True
             return out
@@ -226,15 +308,25 @@ class AnthropicLM(BaseProviderLM):
         tc = request.config.tool_choice
         if tc is None:
             return None
+        
+        payload: dict[str, Any] = {}
         if tc.mode == "none":
-            return {"type": "none"}
-        if tc.allowed:
+            payload["type"] = "none"
+        elif tc.allowed:
             if len(tc.allowed) == 1:
-                return {"type": "tool", "name": tc.allowed[0]}
-            return {"type": "any" if tc.mode == "required" else "auto"}
-        if tc.mode == "required":
-            return {"type": "any"}
-        return {"type": "auto"}
+                payload["type"] = "tool"
+                payload["name"] = tc.allowed[0]
+            else:
+                payload["type"] = "any" if tc.mode == "required" else "auto"
+        elif tc.mode == "required":
+            payload["type"] = "any"
+        else:
+            payload["type"] = "auto"
+
+        if tc.parallel is False and payload["type"] != "none":
+            payload["disable_parallel_tool_use"] = True
+            
+        return payload
 
     def _payload(self, request: Request, stream: bool) -> dict[str, Any]:
         extensions = dict(request.config.extensions or {})
@@ -289,7 +381,7 @@ class AnthropicLM(BaseProviderLM):
         return make_json_request(
             method="POST",
             url=f"{self.base_url.rstrip('/')}/messages",
-            headers=self._headers(),
+            headers=self._headers(request),
             payload=self._payload(request, stream=stream),
             read_timeout=120.0 if stream else 60.0,
         )
@@ -299,12 +391,20 @@ class AnthropicLM(BaseProviderLM):
     def parse_response(self, request: Request, response: HttpResponse) -> Response:
         data = response.json()
         parts: list[Any] = []
-        for block in data.get("content", []) or []:
+        unmapped: list[dict[str, str]] = []
+        for block_index, block in enumerate(data.get("content", []) or []):
             if not isinstance(block, dict):
+                _record_unmapped(unmapped, f"content[{block_index}]", type(block).__name__)
                 continue
             block_type = block.get("type")
             if block_type == "text":
                 parts.append(TextPart(text=str(block.get("text") or "")))
+                for citation_payload in block.get("citations", []) or []:
+                    if not isinstance(citation_payload, dict):
+                        continue
+                    citation = _citation_from_anthropic(citation_payload)
+                    if citation is not None:
+                        parts.append(citation)
             elif block_type == "tool_use":
                 parts.append(ToolCallPart(
                     id=str(block.get("id") or f"tool_{len(parts)}"),
@@ -315,6 +415,10 @@ class AnthropicLM(BaseProviderLM):
                 parts.append(ThinkingPart(text=str(block.get("thinking") or block.get("text") or ""), redacted=False))
             elif block_type == "redacted_thinking":
                 parts.append(ThinkingPart(text="[redacted]", redacted=True))
+            elif block_type in ANTHROPIC_PROVIDER_EXECUTED_BLOCKS:
+                continue
+            else:
+                _record_unmapped(unmapped, f"content[{block_index}]", block_type)
 
         if not parts:
             parts = [TextPart(text="")]
@@ -336,7 +440,7 @@ class AnthropicLM(BaseProviderLM):
             message=Message.assistant(tuple(parts)),
             finish_reason=_finish_reason(data.get("stop_reason"), has_tool_call=has_tool),
             usage=usage,
-            provider_data=data,
+            provider_data=_attach_unmapped(data, unmapped),
         )
 
     def parse_stream_event(self, request: Request, raw_event: SSEEvent) -> StreamEvent | None:

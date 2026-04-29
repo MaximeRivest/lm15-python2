@@ -1,0 +1,32 @@
+{
+  "id": "gemini.top_k",
+  "provider": "gemini",
+  "feature": "top_k",
+  "description": "generationConfig.topK",
+  "request": {
+    "method": "POST",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    "headers": {
+      "x-goog-api-key": "$GEMINI_API_KEY",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Write one short slogan about science."
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "topK": 10
+      }
+    }
+  },
+  "expect": {
+    "status": 200
+  }
+}

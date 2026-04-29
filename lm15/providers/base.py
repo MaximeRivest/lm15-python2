@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import ClassVar, Iterator, Protocol
 
 from ..errors import (
+    AuthError,
     ProviderError,
     TransportError as LM15TransportError,
     UnsupportedFeatureError,
@@ -114,6 +115,7 @@ class BaseProviderLM:
 
     def stream(self, request: Request) -> Iterator[StreamEvent]:
         req = self.build_request(request, stream=True)
+        self._ensure_transport_open()
         try:
             with self.transport.stream(req) as resp:
                 if resp.status >= 400:
@@ -136,6 +138,7 @@ class BaseProviderLM:
             raise LM15TransportError(str(exc)) from exc
 
     def _send(self, request: TransportRequest) -> HttpResponse:
+        self._ensure_transport_open()
         try:
             with self.transport.stream(request) as resp:
                 body = resp.read()
@@ -150,12 +153,50 @@ class BaseProviderLM:
             raise LM15TransportError(str(exc)) from exc
 
     def normalize_error(self, status: int, body: str) -> ProviderError:
-        return map_http_error(status, body.strip()[:500] or f"HTTP {status}")
+        return map_http_error(
+            status,
+            body.strip()[:500] or f"HTTP {status}",
+            provider=self.provider,
+            env_keys=self.manifest.env_keys,
+        )
+
+    def _provider_error(
+        self,
+        cls: type[ProviderError],
+        message: str,
+        *,
+        status: int | None = None,
+        provider_code: str | None = None,
+        request_id: str | None = None,
+        retry_after: float | None = None,
+    ) -> ProviderError:
+        kwargs = {
+            "provider": self.provider,
+            "provider_code": provider_code or None,
+            "status": status,
+            "request_id": request_id or None,
+            "retry_after": retry_after,
+        }
+        kwargs = {key: value for key, value in kwargs.items() if value is not None}
+        if issubclass(cls, AuthError):
+            return cls(message, env_keys=self.manifest.env_keys, **kwargs)
+        return cls(message, **kwargs)
 
     def close(self) -> None:
         close = getattr(self.transport, "close", None)
         if callable(close):
             close()
+
+    def _ensure_transport_open(self) -> None:
+        """Recreate the default transport if it was closed by interactive tooling.
+
+        Provider objects are often kept in notebook/REPL variables.  Some
+        interactive runners eagerly close context-manager-like objects between
+        cells; when that happens, the default StdlibTransport can be safely
+        replaced before the next request.
+        """
+        if isinstance(self.transport, StdlibTransport) and getattr(self.transport, "_closed", False):
+            self.transport = default_transport()
 
     def __enter__(self):
         return self
@@ -164,22 +205,22 @@ class BaseProviderLM:
         self.close()
 
     def live(self, config: LiveConfig) -> LiveSession:
-        raise UnsupportedFeatureError(f"{self.provider}: live not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: live not supported", provider=self.provider)
 
     def embeddings(self, request: EmbeddingRequest) -> EmbeddingResponse:
-        raise UnsupportedFeatureError(f"{self.provider}: embeddings not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: embeddings not supported", provider=self.provider)
 
     def file_upload(self, request: FileUploadRequest) -> FileUploadResponse:
-        raise UnsupportedFeatureError(f"{self.provider}: file upload not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: file upload not supported", provider=self.provider)
 
     def batch_submit(self, request: BatchRequest) -> BatchResponse:
-        raise UnsupportedFeatureError(f"{self.provider}: batch submit not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: batch submit not supported", provider=self.provider)
 
     def image_generate(self, request: ImageGenerationRequest) -> ImageGenerationResponse:
-        raise UnsupportedFeatureError(f"{self.provider}: image generation not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: image generation not supported", provider=self.provider)
 
     def audio_generate(self, request: AudioGenerationRequest) -> AudioGenerationResponse:
-        raise UnsupportedFeatureError(f"{self.provider}: audio generation not supported")
+        raise UnsupportedFeatureError(f"{self.provider}: audio generation not supported", provider=self.provider)
 
 
 class UnsupportedLiveSession:

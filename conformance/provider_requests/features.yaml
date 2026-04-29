@@ -1,0 +1,396 @@
+openai:
+  endpoint: POST https://api.openai.com/v1/responses
+  doc: api-references/openai/pages/responses--create.md
+  features:
+    basic_text:
+      description: Simple text prompt → text response
+      status: covered
+      scope: lm15
+    streaming:
+      description: 'stream: true'
+      status: covered
+      scope: lm15
+    system_prompt:
+      description: instructions field (system prompt)
+      status: covered
+      scope: lm15
+    temperature:
+      description: temperature + max_output_tokens
+      status: covered
+      scope: lm15
+    tools:
+      description: Function calling with tools array
+      status: covered
+      scope: lm15
+    image_url:
+      description: Image input via URL (input_image with image_url)
+      status: covered
+      scope: lm15
+    image_file:
+      description: Image input via file_id
+      status: covered
+      scope: lm15
+    file_input:
+      description: File/PDF input via file object
+      status: covered
+      scope: lm15
+    multi_turn:
+      description: Multiple user/assistant messages
+      status: covered
+      scope: lm15
+    multi_turn_tool_result:
+      description: Conversation with tool call + tool result
+      status: covered
+      scope: lm15
+    tool_choice_auto:
+      description: 'tool_choice: ''auto'''
+      status: covered
+      scope: lm15
+    tool_choice_required:
+      description: 'tool_choice: ''required'''
+      status: covered
+      scope: lm15
+    tool_choice_none:
+      description: 'tool_choice: ''none'''
+      status: covered
+      scope: lm15
+    tool_choice_specific:
+      description: 'tool_choice: {type: ''function'', name: ''fn''}'
+      status: covered
+      scope: lm15
+    parallel_tool_calls:
+      description: 'parallel_tool_calls: true/false'
+      status: covered
+      scope: lm15
+    max_tool_calls:
+      description: max_tool_calls limit
+      status: covered
+      scope: lm15
+    structured_output:
+      description: text.format with json_schema response format
+      status: covered
+      scope: lm15
+    structured_output_json_object:
+      description: text.format with json_object type
+      status: covered
+      scope: lm15
+    top_p:
+      description: top_p sampling parameter
+      status: covered
+      scope: lm15
+    top_logprobs:
+      description: top_logprobs for token probabilities
+      status: covered
+      scope: provider
+    reasoning:
+      description: reasoning.effort parameter
+      status: covered
+      scope: lm15
+    reasoning_encrypted:
+      description: reasoning with encrypted_content include
+      status: covered
+      scope: provider
+    web_search:
+      description: Web search tool
+      status: covered
+      scope: lm15
+    file_search:
+      description: File search / retrieval tool
+      status: covered
+      scope: provider
+    code_interpreter:
+      description: Code interpreter tool
+      status: covered
+      scope: lm15
+    computer_use:
+      description: Computer use tool
+      status: covered
+      scope: provider
+    previous_response_id:
+      description: Chain responses via previous_response_id
+      status: covered
+      scope: provider
+    conversation:
+      description: Conversation object for multi-turn
+      status: covered
+      scope: provider
+    store:
+      description: 'store: true/false for response storage'
+      status: covered
+      scope: provider
+    background:
+      description: 'background: true for async processing'
+      status: covered
+      scope: provider
+    truncation:
+      description: 'truncation: ''auto'' or ''disabled'''
+      status: covered
+      scope: provider
+    service_tier:
+      description: service_tier selection
+      status: covered
+      scope: provider
+    metadata:
+      description: Request metadata
+      status: covered
+      scope: provider
+    prompt:
+      description: Stored prompt reference
+      status: covered
+      scope: provider
+    include:
+      description: include array for additional output data
+      status: covered
+      scope: provider
+    context_management:
+      description: Context management / compaction configuration
+      status: covered
+      scope: provider
+    prompt_cache_key:
+      description: prompt_cache_key for caching
+      status: covered
+      scope: provider
+    prompt_cache_retention:
+      description: prompt_cache_retention duration
+      status: covered
+      scope: provider
+    safety_identifier:
+      description: safety_identifier for content filtering
+      status: covered
+      scope: provider
+    stream_options:
+      description: stream_options (include_obfuscation)
+      status: covered
+      scope: provider
+    user:
+      description: user identifier for abuse tracking
+      status: covered
+      scope: provider
+anthropic:
+  endpoint: POST https://api.anthropic.com/v1/messages
+  doc: api-references/anthropic/pages/messages--create.md
+  features:
+    basic_text:
+      description: Simple text prompt → text response
+      status: covered
+      scope: lm15
+    streaming:
+      description: 'stream: true (SSE)'
+      status: covered
+      scope: lm15
+    system_prompt:
+      description: system field (string or content blocks)
+      status: covered
+      scope: lm15
+    temperature:
+      description: temperature parameter
+      status: covered
+      scope: lm15
+    max_tokens:
+      description: max_tokens (required field)
+      status: covered
+      scope: lm15
+    tools:
+      description: Function calling with tools array
+      status: covered
+      scope: lm15
+    image_base64:
+      description: Image input via base64 source
+      status: covered
+      scope: lm15
+    image_url:
+      description: Image input via URL source
+      status: covered
+      scope: lm15
+    pdf_base64:
+      description: PDF input via base64 document source
+      status: covered
+      scope: lm15
+    multi_turn:
+      description: Multiple user/assistant messages
+      status: covered
+      scope: lm15
+    multi_turn_tool_result:
+      description: Conversation with tool_use + tool_result blocks
+      status: covered
+      scope: lm15
+    system_content_blocks:
+      description: System as array of TextBlockParam (with cache_control)
+      status: covered
+      scope: provider
+    tool_choice_auto:
+      description: 'tool_choice: {type: ''auto''}'
+      status: covered
+      scope: lm15
+    tool_choice_any:
+      description: 'tool_choice: {type: ''any''}'
+      status: covered
+      scope: lm15
+    tool_choice_specific:
+      description: 'tool_choice: {type: ''tool'', name: ''fn''}'
+      status: covered
+      scope: lm15
+    tool_choice_none:
+      description: 'tool_choice: {type: ''none''}'
+      status: covered
+      scope: lm15
+    stop_sequences:
+      description: Custom stop sequences
+      status: covered
+      scope: lm15
+    top_p:
+      description: top_p (nucleus sampling)
+      status: covered
+      scope: lm15
+    top_k:
+      description: top_k sampling
+      status: covered
+      scope: lm15
+    thinking:
+      description: Extended thinking with thinking.type='enabled'
+      status: covered
+      scope: lm15
+    thinking_budget:
+      description: Thinking with budget_tokens
+      status: covered
+      scope: lm15
+    cache_control:
+      description: Prompt caching via cache_control on messages/system
+      status: covered
+      scope: provider
+    metadata:
+      description: Request metadata (user_id)
+      status: covered
+      scope: provider
+    service_tier:
+      description: service_tier selection
+      status: covered
+      scope: provider
+    output_config:
+      description: Output configuration (JSON mode etc)
+      status: covered
+      scope: lm15
+    web_search:
+      description: Web search via server-side tool
+      status: covered
+      scope: lm15
+    container:
+      description: Container for sandboxed execution
+      status: covered
+      scope: lm15
+    inference_geo:
+      description: inference_geo region preference
+      status: covered
+      scope: provider
+gemini:
+  endpoint: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+  doc: api-references/gemini/pages/generate-content.md
+  features:
+    basic_text:
+      description: Simple text prompt → text response
+      status: covered
+      scope: lm15
+    streaming:
+      description: streamGenerateContent endpoint
+      status: covered
+      scope: lm15
+    system_prompt:
+      description: systemInstruction field
+      status: covered
+      scope: lm15
+    tools:
+      description: Function calling with tools/functionDeclarations
+      status: covered
+      scope: lm15
+    image_inline:
+      description: Image via inlineData (base64)
+      status: covered
+      scope: lm15
+    image_file_uri:
+      description: Image via fileData (Google file URI)
+      status: covered
+      scope: lm15
+    audio_inline:
+      description: Audio via inlineData
+      status: covered
+      scope: lm15
+    video_file:
+      description: Video via fileData
+      status: covered
+      scope: lm15
+    pdf_inline:
+      description: PDF via inlineData
+      status: covered
+      scope: lm15
+    multi_turn:
+      description: Multi-turn conversation (multiple contents)
+      status: covered
+      scope: lm15
+    multi_turn_function_response:
+      description: Conversation with functionCall + functionResponse
+      status: covered
+      scope: lm15
+    temperature:
+      description: generationConfig.temperature
+      status: covered
+      scope: lm15
+    max_output_tokens:
+      description: generationConfig.maxOutputTokens
+      status: covered
+      scope: lm15
+    top_p:
+      description: generationConfig.topP
+      status: covered
+      scope: lm15
+    top_k:
+      description: generationConfig.topK
+      status: covered
+      scope: lm15
+    stop_sequences:
+      description: generationConfig.stopSequences
+      status: covered
+      scope: lm15
+    response_mime_type:
+      description: generationConfig.responseMimeType (JSON mode)
+      status: covered
+      scope: lm15
+    response_schema:
+      description: generationConfig.responseSchema (structured output)
+      status: covered
+      scope: lm15
+    thinking:
+      description: generationConfig.thinkingConfig
+      status: covered
+      scope: lm15
+    tool_config_auto:
+      description: 'toolConfig.functionCallingConfig.mode: AUTO'
+      status: covered
+      scope: lm15
+    tool_config_any:
+      description: 'toolConfig.functionCallingConfig.mode: ANY'
+      status: covered
+      scope: lm15
+    tool_config_none:
+      description: 'toolConfig.functionCallingConfig.mode: NONE'
+      status: covered
+      scope: lm15
+    safety_settings:
+      description: Safety settings (harm categories + thresholds)
+      status: covered
+      scope: provider
+    google_search:
+      description: Google Search grounding tool
+      status: covered
+      scope: lm15
+    code_execution:
+      description: Code execution tool
+      status: covered
+      scope: lm15
+    cached_content:
+      description: Use cachedContent for context caching
+      status: covered
+      scope: provider
+    store:
+      description: Logging/storage configuration
+      status: covered
+      scope: provider

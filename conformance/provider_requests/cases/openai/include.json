@@ -1,0 +1,37 @@
+{
+  "id": "openai.include",
+  "provider": "openai",
+  "feature": "include",
+  "description": "include array for additional output data",
+  "request": {
+    "method": "POST",
+    "url": "https://api.openai.com/v1/responses",
+    "headers": {
+      "Authorization": "Bearer $OPENAI_API_KEY",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "gpt-4.1-mini",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Reply with exactly one lowercase word: cat"
+            }
+          ]
+        }
+      ],
+      "include": [
+        "message.output_text.logprobs"
+      ],
+      "top_logprobs": 2,
+      "max_output_tokens": 16,
+      "stream": false
+    }
+  },
+  "expect": {
+    "status": 200
+  }
+}

@@ -30,7 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Iterator
 
-from .errors import RETRYABLE_ERRORS, error_class_for_code
+from .errors import LM15Error, RETRYABLE_ERRORS, error_class_for_code
 from .types import (
     AudioDelta,
     AudioPart,
@@ -681,9 +681,9 @@ def _exception_from_error(event: StreamEvent) -> Exception:
     err = event.error or ErrorDetail(code="provider", message="stream error")
     code = err.code
     message = err.message
-    if err.provider_code and err.provider_code not in message:
-        message = f"{message} (provider_code={err.provider_code})"
     exc_cls = error_class_for_code(code)
+    if issubclass(exc_cls, LM15Error):
+        return exc_cls(message, provider_code=err.provider_code)
     return exc_cls(message)
 
 

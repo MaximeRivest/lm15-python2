@@ -9,3 +9,4 @@ build/
 .mypy_cache/
 .ruff_cache/
 benchmarks/__pycache__/
+conformance/reports/

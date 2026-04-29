@@ -16,6 +16,7 @@ from ..errors import (
     RateLimitError,
     ServerError,
     TimeoutError,
+    UnsupportedModelError,
     canonical_error_code,
     map_http_error,
 )
@@ -32,6 +33,8 @@ from ..types import (
     BatchRequest,
     BatchResponse,
     BuiltinTool,
+    CitationDelta,
+    CitationPart,
     EmbeddingRequest,
     EmbeddingResponse,
     ErrorDetail,
@@ -90,6 +93,26 @@ _OPENAI_BUILTIN_MAP: dict[str, str] = {
     "computer_use": "computer_use_preview",
 }
 
+OPENAI_PROVIDER_EXECUTED_ITEMS = {
+    "web_search_call",
+    "file_search_call",
+    "code_interpreter_call",
+    "computer_call",
+    "computer_use_call",
+}
+
+
+def _attach_unmapped(provider_data: dict[str, Any], unmapped: list[dict[str, str]]) -> dict[str, Any]:
+    if not unmapped:
+        return provider_data
+    out = dict(provider_data)
+    out["_lm15_unmapped"] = unmapped
+    return out
+
+
+def _record_unmapped(unmapped: list[dict[str, str]], path: str, typ: Any) -> None:
+    unmapped.append({"path": path, "type": str(typ or "<missing>")})
+
 
 def _builtin_to_openai(tool: BuiltinTool) -> dict[str, Any]:
     out: dict[str, Any] = {"type": _OPENAI_BUILTIN_MAP.get(tool.name, tool.name)}
@@ -122,6 +145,65 @@ def _batch_status(status: str) -> str:
     if status in {"validating", "queued"}:
         return "queued"
     return "submitted"
+
+
+def _str_or_none(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _annotation_text(annotation: dict[str, Any], source_text: str | None) -> str | None:
+    for key in ("text", "snippet", "cited_text", "quote"):
+        text = _str_or_none(annotation.get(key))
+        if text is not None:
+            return text
+
+    start = _int_or_none(annotation.get("start_index"))
+    end = _int_or_none(annotation.get("end_index"))
+    if source_text is not None and start is not None and end is not None:
+        if 0 <= start < end <= len(source_text):
+            return source_text[start:end]
+    return None
+
+
+def _citation_from_openai_annotation(annotation: dict[str, Any], source_text: str | None) -> CitationPart | None:
+    url = _str_or_none(annotation.get("url") or annotation.get("uri"))
+    title = _str_or_none(
+        annotation.get("title")
+        or annotation.get("filename")
+        or annotation.get("file_id")
+    )
+    text = _annotation_text(annotation, source_text)
+    if url is None and title is None and text is None:
+        return None
+    return CitationPart(url=url, title=title, text=text)
+
+
+def _citation_delta_from_openai_annotation(
+    annotation: dict[str, Any],
+    *,
+    part_index: int,
+    source_text: str | None = None,
+) -> CitationDelta | None:
+    citation = _citation_from_openai_annotation(annotation, source_text)
+    if citation is None:
+        return None
+    return CitationDelta(
+        text=citation.text,
+        url=citation.url,
+        title=citation.title,
+        part_index=part_index,
+    )
 
 
 @dataclass(slots=True)
@@ -174,7 +256,14 @@ class OpenAILM(BaseProviderLM):
         "empty_image_file": InvalidRequestError,
         "failed_to_download_image": InvalidRequestError,
         "image_file_not_found": InvalidRequestError,
+        "model_not_found": UnsupportedModelError,
+        "model_not_available": UnsupportedModelError,
+        "unsupported_model": UnsupportedModelError,
     }
+
+    _model_error_codes: ClassVar[frozenset[str]] = frozenset(
+        {"model_not_found", "model_not_available", "unsupported_model"}
+    )
 
     _stream_error_code_map: ClassVar[dict[str, type[ProviderError]]] = {
         **_response_error_code_map,
@@ -191,12 +280,26 @@ class OpenAILM(BaseProviderLM):
             "Content-Type": content_type,
         }
 
+    @staticmethod
+    def _is_model_error(message: str, *codes: str) -> bool:
+        lowered = " ".join(value for value in (message, *codes) if value).lower()
+        return "model" in lowered and any(
+            marker in lowered
+            for marker in (
+                "not found",
+                "does not exist",
+                "not exist",
+                "not supported",
+                "unsupported",
+                "not available",
+                "unknown",
+            )
+        )
+
     def _response_error(self, code: str, message: str) -> ProviderError:
         cls = self._response_error_code_map.get(code, ServerError)
         msg = message or code or "provider error"
-        if code and code not in msg:
-            msg = f"{msg} ({code})"
-        return cls(msg)
+        return self._provider_error(cls, msg, provider_code=code or None)
 
     def _error_detail(self, provider_code: str, message: str) -> ErrorDetail:
         cls = self._stream_error_code_map.get(provider_code, ProviderError)
@@ -215,19 +318,57 @@ class OpenAILM(BaseProviderLM):
             code = str(err.get("code") or "") if isinstance(err, dict) else ""
             err_type = str(err.get("type") or "") if isinstance(err, dict) else ""
 
+            provider_code = code or err_type or None
+
             if code == "context_length_exceeded":
-                return ContextLengthError(msg)
+                return self._provider_error(
+                    ContextLengthError,
+                    msg,
+                    status=status,
+                    provider_code=provider_code,
+                )
+            if code in self._model_error_codes or (
+                status == 404 and self._is_model_error(msg, code, err_type)
+            ):
+                return self._provider_error(
+                    UnsupportedModelError,
+                    msg,
+                    status=status,
+                    provider_code=provider_code,
+                )
             if code == "insufficient_quota" or err_type == "insufficient_quota":
-                return BillingError(msg)
+                return self._provider_error(
+                    BillingError,
+                    msg,
+                    status=status,
+                    provider_code=provider_code,
+                )
             if code == "invalid_api_key" or err_type == "authentication_error":
-                return AuthError(msg)
+                return self._provider_error(
+                    AuthError,
+                    msg,
+                    status=status,
+                    provider_code=provider_code,
+                )
             if code == "rate_limit_exceeded" or err_type == "rate_limit_error":
-                return RateLimitError(msg)
+                return self._provider_error(
+                    RateLimitError,
+                    msg,
+                    status=status,
+                    provider_code=provider_code,
+                )
             if code and code not in msg:
                 msg = f"{msg} ({code})"
         except Exception:
             msg = body.strip()[:500] or f"HTTP {status}"
-        return map_http_error(status, msg)
+            provider_code = None
+        return map_http_error(
+            status,
+            msg,
+            provider=self.provider,
+            env_keys=self.manifest.env_keys,
+            provider_code=provider_code,
+        )
 
     # ─── Request serialization ──────────────────────────────────────
 
@@ -249,11 +390,19 @@ class OpenAILM(BaseProviderLM):
                         )
                 continue
 
-            content_parts = [
-                part_to_openai_input(part)
-                for part in msg.parts
-                if not isinstance(part, (ToolCallPart, ToolResultPart))
-            ]
+            if msg.role == "assistant":
+                content_parts = []
+                for part in msg.parts:
+                    if isinstance(part, TextPart):
+                        content_parts.append({"type": "output_text", "text": part.text})
+                    elif isinstance(part, RefusalPart):
+                        content_parts.append({"type": "refusal", "refusal": part.text})
+            else:
+                content_parts = [
+                    part_to_openai_input(part)
+                    for part in msg.parts
+                    if not isinstance(part, (ToolCallPart, ToolResultPart))
+                ]
             if content_parts:
                 items.append({"role": msg.role, "content": content_parts})
 
@@ -352,17 +501,27 @@ class OpenAILM(BaseProviderLM):
             )
 
         parts: list[Any] = []
-        for item in data.get("output", []):
+        unmapped: list[dict[str, str]] = []
+        for item_index, item in enumerate(data.get("output", []) or []):
             if not isinstance(item, dict):
+                _record_unmapped(unmapped, f"output[{item_index}]", type(item).__name__)
                 continue
             item_type = item.get("type")
             if item_type == "message":
-                for content in item.get("content", []) or []:
+                for content_index, content in enumerate(item.get("content", []) or []):
                     if not isinstance(content, dict):
+                        _record_unmapped(unmapped, f"output[{item_index}].content[{content_index}]", type(content).__name__)
                         continue
                     ctype = content.get("type")
                     if ctype in ("output_text", "text"):
-                        parts.append(TextPart(text=str(content.get("text") or "")))
+                        text = str(content.get("text") or "")
+                        parts.append(TextPart(text=text))
+                        for annotation in content.get("annotations", []) or []:
+                            if not isinstance(annotation, dict):
+                                continue
+                            citation = _citation_from_openai_annotation(annotation, text)
+                            if citation is not None:
+                                parts.append(citation)
                     elif ctype == "refusal":
                         text = str(content.get("refusal") or content.get("text") or "")
                         parts.append(RefusalPart(text=text) if text else TextPart(text=""))
@@ -375,6 +534,8 @@ class OpenAILM(BaseProviderLM):
                         b64 = audio_payload.get("data") or content.get("b64_json") or ""
                         if b64:
                             parts.append(AudioPart(media_type="audio/wav", data=str(b64)))
+                    else:
+                        _record_unmapped(unmapped, f"output[{item_index}].content[{content_index}]", ctype)
             elif item_type == "function_call":
                 parts.append(
                     ToolCallPart(
@@ -391,6 +552,10 @@ class OpenAILM(BaseProviderLM):
                     text = str(summary or item.get("text") or "")
                 if text:
                     parts.append(ThinkingPart(text=text))
+            elif item_type in OPENAI_PROVIDER_EXECUTED_ITEMS:
+                continue
+            else:
+                _record_unmapped(unmapped, f"output[{item_index}]", item_type)
 
         if not parts:
             parts = [TextPart(text=str(data.get("output_text") or ""))]
@@ -415,7 +580,7 @@ class OpenAILM(BaseProviderLM):
             message=Message.assistant(tuple(parts)),
             finish_reason=_finish_from_status(data, has_tool_call=has_tool),
             usage=usage,
-            provider_data=data,
+            provider_data=_attach_unmapped(data, unmapped),
         )
 
     def parse_stream_event(self, request: Request, raw_event: SSEEvent) -> StreamEvent | None:
@@ -440,6 +605,17 @@ class OpenAILM(BaseProviderLM):
                     part_index=int(payload.get("output_index", 0) or 0),
                 )
             )
+
+        if et == "response.output_text.annotation.added":
+            annotation = payload.get("annotation")
+            if isinstance(annotation, dict):
+                delta = _citation_delta_from_openai_annotation(
+                    annotation,
+                    part_index=int(payload.get("output_index", 0) or 0),
+                )
+                if delta is not None:
+                    return StreamDeltaEvent(delta=delta)
+            return None
 
         if et == "response.output_audio.delta":
             return StreamDeltaEvent(
@@ -522,7 +698,7 @@ class OpenAILM(BaseProviderLM):
         if self._should_use_live_completion(request):
             yield from self._stream_via_live_completion(request)
             return
-        yield from super(OpenAILM, self).stream(request)
+        yield from BaseProviderLM.stream(self, request)
 
     def _should_use_live_completion(self, request: Request) -> bool:
         extensions = request.config.extensions or {}

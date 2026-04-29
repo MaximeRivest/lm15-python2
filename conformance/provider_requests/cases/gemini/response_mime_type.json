@@ -1,0 +1,32 @@
+{
+  "id": "gemini.response_mime_type",
+  "provider": "gemini",
+  "feature": "response_mime_type",
+  "description": "JSON mode via generationConfig.responseMimeType",
+  "request": {
+    "method": "POST",
+    "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    "headers": {
+      "x-goog-api-key": "$GEMINI_API_KEY",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Respond with a JSON object containing keys title and summary about DNA."
+            }
+          ]
+        }
+      ],
+      "generationConfig": {
+        "responseMimeType": "application/json"
+      }
+    }
+  },
+  "expect": {
+    "status": 200
+  }
+}

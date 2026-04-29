@@ -7,83 +7,162 @@ serialization and wire formats.
 
 Hierarchy:
     LM15Error
-    ├── TransportError          (network/connection failures)
-    └── ProviderError           (provider returned an error)
-        ├── AuthError           (401/403 — bad or missing API key)
-        ├── BillingError        (402 — payment/quota issue)
-        ├── RateLimitError      (429 — too many requests)
-        ├── InvalidRequestError (400/404/422 — bad request shape)
-        │   └── ContextLengthError  (input too long for model)
-        ├── TimeoutError        (408/504 — request timed out)
-        ├── ServerError         (5xx — provider-side failure)
-        ├── UnsupportedModelError
-        └── UnsupportedFeatureError
+    ├── TransportError              (network/connection failures at the LM layer)
+    ├── ConfigurationError          (local SDK/configuration failures)
+    │   └── NotConfiguredError      (no API key or required provider config)
+    ├── CapabilityError             (local provider-adapter capability failures)
+    │   └── UnsupportedFeatureError
+    └── ProviderError               (provider returned an error response)
+        ├── AuthError               (401/403 — bad or missing API key)
+        ├── BillingError            (402 — payment/quota issue)
+        ├── RateLimitError          (429 — too many requests)
+        ├── InvalidRequestError     (4xx request-shape/resource errors)
+        │   ├── ContextLengthError  (input too long for model)
+        │   └── UnsupportedModelError
+        ├── TimeoutError            (408/504 — request timed out)
+        └── ServerError             (5xx — provider-side failure)
 """
 
 from __future__ import annotations
 
 
 class LM15Error(Exception):
-    """Base for all lm15 errors."""
+    """Base for all lm15 errors.
+
+    Errors keep the human-readable exception message in ``str(error)`` while
+    also exposing structured metadata for logging, telemetry, retries, and
+    programmatic handling.
+    """
+
+    default_code: str | None = None
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        code: str | None = None,
+        provider: str | None = None,
+        provider_code: str | None = None,
+        status: int | None = None,
+        request_id: str | None = None,
+        retry_after: float | None = None,
+    ) -> None:
+        self.message = message
+        self.code = code or self.default_code
+        self.provider = provider
+        self.provider_code = provider_code
+        self.status = status
+        self.request_id = request_id
+        self.retry_after = retry_after
+        super().__init__(message)
 
 
 class TransportError(LM15Error):
-    """Network or connection failure."""
+    """High-level LM transport failure.
+
+    Provider LMs wrap lower-level ``lm15.transports.TransportError`` exceptions
+    into this class.
+    """
+
+    default_code = "transport"
+
+
+class ConfigurationError(LM15Error):
+    """Local SDK or provider-adapter configuration failure."""
+
+    default_code = "not_configured"
+
+
+class CapabilityError(LM15Error):
+    """Requested capability is not supported by this provider adapter."""
+
+    default_code = "unsupported_feature"
 
 
 class ProviderError(LM15Error):
-    """The provider returned an error."""
+    """The provider returned an error response."""
+
+    default_code = "provider"
 
 
 class AuthError(ProviderError):
     """Authentication failed — invalid, expired, or missing API key."""
 
-    def __init__(self, message: str = "") -> None:
+    default_code = "auth"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        provider: str | None = None,
+        env_keys: tuple[str, ...] = (),
+        **kwargs,
+    ) -> None:
+        if provider is not None:
+            kwargs.setdefault("provider", provider)
+        provider_name = provider or kwargs.get("provider")
+        self.env_keys = tuple(env_keys)
+
         guidance = (
             "\n\n"
-            "  To fix, do one of:\n"
-            "    1. Check that your API key is correct and not expired\n"
-            "    2. Set it in your environment: export OPENAI_API_KEY=sk-...\n"
-            "    3. Pass it directly: lm15.call(..., api_key='sk-...')\n"
-            "    4. Add it to a .env file and call lm15.configure(env='.env')\n"
+            "  To fix:\n"
+            "    - Check that your API key is correct and not expired\n"
         )
-        if guidance.strip() not in message:
-            message = message.rstrip() + guidance
-        super().__init__(message)
+        if self.env_keys:
+            keys = " or ".join(f"{key}=..." for key in self.env_keys)
+            guidance += f"    - Set the provider API key in your environment: {keys}\n"
+        else:
+            guidance += "    - Set the provider API key in your environment\n"
+        if provider_name:
+            guidance += f"    - Verify your {provider_name} account/project has access\n"
+
+        super().__init__(_append_guidance(message, guidance), **kwargs)
 
 
 class RateLimitError(ProviderError):
     """Rate limited by the provider (HTTP 429)."""
 
-    def __init__(self, message: str = "") -> None:
+    default_code = "rate_limit"
+
+    def __init__(self, message: str = "", **kwargs) -> None:
         guidance = (
             "\n\n"
             "  To fix:\n"
             "    - Wait a moment and retry\n"
-            "    - Use retries= on model objects: lm15.model(..., retries=3)\n"
+            "    - Enable retries where the calling API exposes a retries option\n"
             "    - Reduce request rate or upgrade your API plan\n"
         )
-        if guidance.strip() not in message:
-            message = message.rstrip() + guidance
-        super().__init__(message)
+        super().__init__(_append_guidance(message, guidance), **kwargs)
 
 
 class BillingError(ProviderError):
     """402 — billing or payment issue."""
 
+    default_code = "billing"
+
 
 class TimeoutError(ProviderError):
-    """Request timed out."""
+    """Provider request timed out."""
+
+    default_code = "timeout"
+
+
+# Descriptive alias that avoids shadowing Python's built-in TimeoutError in new code.
+RequestTimeoutError = TimeoutError
 
 
 class InvalidRequestError(ProviderError):
-    """Bad request shape (400/404/422)."""
+    """Bad request shape or invalid provider resource (4xx)."""
+
+    default_code = "invalid_request"
 
 
 class ContextLengthError(InvalidRequestError):
     """The input exceeds the model's context window."""
 
-    def __init__(self, message: str = "") -> None:
+    default_code = "context_length"
+
+    def __init__(self, message: str = "", **kwargs) -> None:
         guidance = (
             "\n\n"
             "  To fix:\n"
@@ -92,83 +171,165 @@ class ContextLengthError(InvalidRequestError):
             "    - Use a model with a larger context window\n"
             "    - Lower max_tokens to leave more room for input\n"
         )
-        if guidance.strip() not in message:
-            message = message.rstrip() + guidance
-        super().__init__(message)
+        super().__init__(_append_guidance(message, guidance), **kwargs)
+
+
+class UnsupportedModelError(InvalidRequestError):
+    """Model not found, unavailable, or unsupported by the provider."""
+
+    default_code = "unsupported_model"
 
 
 class ServerError(ProviderError):
     """Provider-side failure (5xx)."""
 
-
-class UnsupportedModelError(ProviderError):
-    """Model not found or not supported."""
+    default_code = "server"
 
 
-class UnsupportedFeatureError(ProviderError):
-    """Feature not supported by this provider."""
+class UnsupportedFeatureError(CapabilityError):
+    """Feature not supported by this provider adapter."""
+
+    default_code = "unsupported_feature"
 
 
-class NotConfiguredError(ProviderError):
-    """No API key found for a provider."""
+class NotConfiguredError(ConfigurationError):
+    """No API key or required provider configuration was found."""
+
+    default_code = "not_configured"
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        provider: str | None = None,
+        env_keys: tuple[str, ...] = (),
+        **kwargs,
+    ) -> None:
+        if provider is not None:
+            kwargs.setdefault("provider", provider)
+        provider_name = provider or kwargs.get("provider")
+        self.env_keys = tuple(env_keys)
+
+        guidance = ""
+        if self.env_keys or provider_name:
+            guidance = "\n\n  To fix:\n"
+            if self.env_keys:
+                keys = " or ".join(f"{key}=..." for key in self.env_keys)
+                guidance += f"    - Set the provider API key in your environment: {keys}\n"
+            if provider_name:
+                guidance += f"    - Configure credentials for {provider_name}\n"
+
+        message = _append_guidance(message, guidance) if guidance else message
+        super().__init__(message, **kwargs)
 
 
 # ─── HTTP status → error class mapping ───────────────────────────────
 
-def map_http_error(status: int, message: str) -> ProviderError:
+def map_http_error(
+    status: int,
+    message: str,
+    *,
+    provider: str | None = None,
+    env_keys: tuple[str, ...] = (),
+    provider_code: str | None = None,
+    request_id: str | None = None,
+    retry_after: float | None = None,
+) -> ProviderError:
     """Map HTTP status + message to a typed ProviderError.
 
-    LMs extract the human-readable message from the provider's
-    error body in their normalize_error override.  This function
-    only maps status codes.
+    Provider LMs extract the human-readable message and provider-specific code
+    from the provider's error body in their ``normalize_error`` override. This
+    function only maps HTTP status codes.
     """
+    kwargs = _metadata_kwargs(
+        provider=provider,
+        provider_code=provider_code,
+        status=status,
+        request_id=request_id,
+        retry_after=retry_after,
+    )
     if status in (401, 403):
-        return AuthError(message)
+        return AuthError(message, env_keys=env_keys, **kwargs)
     if status == 402:
-        return BillingError(message)
+        return BillingError(message, **kwargs)
     if status in (408, 504):
-        return TimeoutError(message)
+        return TimeoutError(message, **kwargs)
     if status == 429:
-        return RateLimitError(message)
+        return RateLimitError(message, **kwargs)
     if status in (400, 404, 409, 413, 422):
-        return InvalidRequestError(message)
+        return InvalidRequestError(message, **kwargs)
     if 500 <= status <= 599:
-        return ServerError(message)
-    return ProviderError(message)
+        return ServerError(message, **kwargs)
+    return ProviderError(message, **kwargs)
 
 
 # ─── Canonical error codes ───────────────────────────────────────────
 
 # Bidirectional mapping between error classes and string codes.
-# Codes are provider-agnostic and stable across LMs.
+# Codes are provider-agnostic and stable across LMs. More-specific classes must
+# appear before their base classes.
 
-_CLASS_TO_CODE: dict[type[ProviderError], str] = {
+_CLASS_TO_CODE: dict[type[LM15Error], str] = {
     ContextLengthError: "context_length",
+    UnsupportedModelError: "unsupported_model",
     AuthError: "auth",
     BillingError: "billing",
     RateLimitError: "rate_limit",
     InvalidRequestError: "invalid_request",
     TimeoutError: "timeout",
     ServerError: "server",
+    UnsupportedFeatureError: "unsupported_feature",
+    NotConfiguredError: "not_configured",
+    TransportError: "transport",
     ProviderError: "provider",
 }
 
-_CODE_TO_CLASS: dict[str, type[ProviderError]] = {v: k for k, v in _CLASS_TO_CODE.items()}
+_CODE_TO_CLASS: dict[str, type[LM15Error]] = {v: k for k, v in _CLASS_TO_CODE.items()}
 
 
-def canonical_error_code(error: type[ProviderError] | ProviderError) -> str:
+def canonical_error_code(error: type[LM15Error] | LM15Error) -> str:
     """Return the canonical string code for an error class or instance."""
     cls = error if isinstance(error, type) else type(error)
     for check_cls, code in _CLASS_TO_CODE.items():
         if issubclass(cls, check_cls):
             return code
-    return "provider"
+    default_code = getattr(cls, "default_code", None)
+    return default_code or "provider"
 
 
-def error_class_for_code(code: str) -> type[ProviderError]:
-    """Return the ProviderError subclass for a canonical string code."""
+def error_class_for_code(code: str) -> type[LM15Error]:
+    """Return the LM15Error subclass for a canonical string code."""
     return _CODE_TO_CLASS.get(code, ProviderError)
 
 
 # Retryable errors — used by Result for automatic retries
 RETRYABLE_ERRORS = (RateLimitError, TimeoutError, ServerError, TransportError)
+
+
+def _append_guidance(message: str, guidance: str) -> str:
+    """Append guidance once while preserving the original provider message."""
+    if guidance.strip() in message:
+        return message
+    return message.rstrip() + guidance
+
+
+def _metadata_kwargs(
+    *,
+    provider: str | None = None,
+    provider_code: str | None = None,
+    status: int | None = None,
+    request_id: str | None = None,
+    retry_after: float | None = None,
+) -> dict[str, object]:
+    kwargs: dict[str, object] = {}
+    if provider:
+        kwargs["provider"] = provider
+    if provider_code:
+        kwargs["provider_code"] = provider_code
+    if status is not None:
+        kwargs["status"] = status
+    if request_id:
+        kwargs["request_id"] = request_id
+    if retry_after is not None:
+        kwargs["retry_after"] = retry_after
+    return kwargs

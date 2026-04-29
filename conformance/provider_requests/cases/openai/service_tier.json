@@ -1,0 +1,36 @@
+{
+  "id": "openai.service_tier",
+  "provider": "openai",
+  "feature": "service_tier",
+  "description": "service_tier selection",
+  "request": {
+    "method": "POST",
+    "url": "https://api.openai.com/v1/responses",
+    "headers": {
+      "Authorization": "Bearer $OPENAI_API_KEY",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "gpt-4.1-mini",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Reply with exactly: tiered"
+            }
+          ]
+        }
+      ],
+      "service_tier": "default",
+      "stream": false
+    }
+  },
+  "expect": {
+    "status": 200,
+    "body_contains": [
+      "\"service_tier\": \"default\""
+    ]
+  }
+}

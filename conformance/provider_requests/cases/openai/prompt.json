@@ -1,0 +1,32 @@
+{
+  "id": "openai.prompt",
+  "provider": "openai",
+  "feature": "prompt",
+  "description": "Stored prompt reference",
+  "request": {
+    "method": "POST",
+    "url": "https://api.openai.com/v1/responses",
+    "headers": {
+      "Authorization": "Bearer $OPENAI_API_KEY",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "model": "gpt-4.1-mini",
+      "input": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Reply with exactly: prompt"
+            }
+          ]
+        }
+      ],
+      "stream": false
+    }
+  },
+  "expect": {
+    "status": 200
+  }
+}

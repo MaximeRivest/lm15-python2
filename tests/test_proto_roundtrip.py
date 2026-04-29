@@ -188,6 +188,10 @@ def pb(tmp_path_factory):
         "ERROR_CODE_TIMEOUT": ("ErrorCode", "ERROR_CODE_TIMEOUT"),
         "ERROR_CODE_SERVER": ("ErrorCode", "ERROR_CODE_SERVER"),
         "ERROR_CODE_PROVIDER": ("ErrorCode", "ERROR_CODE_PROVIDER"),
+        "ERROR_CODE_UNSUPPORTED_MODEL": ("ErrorCode", "ERROR_CODE_UNSUPPORTED_MODEL"),
+        "ERROR_CODE_UNSUPPORTED_FEATURE": ("ErrorCode", "ERROR_CODE_UNSUPPORTED_FEATURE"),
+        "ERROR_CODE_NOT_CONFIGURED": ("ErrorCode", "ERROR_CODE_NOT_CONFIGURED"),
+        "ERROR_CODE_TRANSPORT": ("ErrorCode", "ERROR_CODE_TRANSPORT"),
         "IMAGE_DETAIL_LOW": ("ImageDetail", "IMAGE_DETAIL_LOW"),
         "IMAGE_DETAIL_HIGH": ("ImageDetail", "IMAGE_DETAIL_HIGH"),
         "IMAGE_DETAIL_AUTO": ("ImageDetail", "IMAGE_DETAIL_AUTO"),
@@ -261,6 +265,10 @@ def _maps(pb):
         "timeout": pb.ERROR_CODE_TIMEOUT,
         "server": pb.ERROR_CODE_SERVER,
         "provider": pb.ERROR_CODE_PROVIDER,
+        "unsupported_model": pb.ERROR_CODE_UNSUPPORTED_MODEL,
+        "unsupported_feature": pb.ERROR_CODE_UNSUPPORTED_FEATURE,
+        "not_configured": pb.ERROR_CODE_NOT_CONFIGURED,
+        "transport": pb.ERROR_CODE_TRANSPORT,
     }
     detail_to_proto = {
         "low": pb.IMAGE_DETAIL_LOW,

@@ -1,0 +1,51 @@
+{
+  "id": "anthropic.output_config",
+  "provider": "anthropic",
+  "feature": "output_config",
+  "description": "Output configuration with JSON schema response format",
+  "request": {
+    "method": "POST",
+    "url": "https://api.anthropic.com/v1/messages",
+    "headers": {
+      "x-api-key": "$ANTHROPIC_API_KEY",
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json"
+    },
+    "body": {
+      "model": "claude-sonnet-4-5",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Return a JSON object matching the schema with animal set to cat."
+            }
+          ]
+        }
+      ],
+      "output_config": {
+        "format": {
+          "type": "json_schema",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "animal": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "animal"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "max_tokens": 128,
+      "stream": false
+    }
+  },
+  "expect": {
+    "status": 200
+  }
+}
