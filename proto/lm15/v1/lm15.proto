@@ -418,6 +418,9 @@ message ImageGenerationRequest {
 message ImageGenerationResponse {
   repeated ImagePart images = 1;
   google.protobuf.Struct provider_data = 2;
+  google.protobuf.StringValue id = 3;
+  google.protobuf.StringValue model = 4;
+  Usage usage = 5;
 }
 
 message AudioGenerationRequest {
@@ -431,6 +434,9 @@ message AudioGenerationRequest {
 message AudioGenerationResponse {
   AudioPart audio = 1;
   google.protobuf.Struct provider_data = 2;
+  google.protobuf.StringValue id = 3;
+  google.protobuf.StringValue model = 4;
+  Usage usage = 5;
 }
 
 message EndpointRequest {
@@ -513,6 +519,7 @@ message LiveServerEvent {
     LiveServerInterrupted interrupted = 4;
     LiveServerTurnEnd turn_end = 5;
     LiveServerError error = 6;
+    LiveServerToolCallDelta tool_call_delta = 7;
   }
 }
 
@@ -528,6 +535,12 @@ message LiveServerToolCall {
   string id = 1;
   string name = 2;
   google.protobuf.Struct input = 3;
+}
+
+message LiveServerToolCallDelta {
+  string input_delta = 1;
+  google.protobuf.StringValue id = 2;
+  google.protobuf.StringValue name = 3;
 }
 
 message LiveServerInterrupted {}

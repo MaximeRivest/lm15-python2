@@ -47,6 +47,7 @@ from lm15.types import (
     LiveServerEvent,
     LiveServerInterruptedEvent,
     LiveServerTextEvent,
+    LiveServerToolCallDeltaEvent,
     LiveServerToolCallEvent,
     LiveServerTurnEndEvent,
     Message,
@@ -157,6 +158,7 @@ def pb(tmp_path_factory):
         "LiveConfig",
         "LiveClientEvent",
         "LiveServerEvent",
+        "LiveServerToolCallDelta",
         "ToolCallInfo",
     ]
     ns = SimpleNamespace(**{name: cls(name) for name in names})
@@ -602,6 +604,12 @@ def _live_server_event_to_proto(pb, event: LiveServerEvent):
         out.tool_call.id = event.id or ""
         out.tool_call.name = event.name or ""
         _copy_struct(out.tool_call.input, event.input)
+    elif event.type == "tool_call_delta":
+        out.tool_call_delta.input_delta = event.input_delta or ""
+        if event.id is not None:
+            _set_wrapper(out.tool_call_delta.id, event.id)
+        if event.name is not None:
+            _set_wrapper(out.tool_call_delta.name, event.name)
     elif event.type == "interrupted":
         out.interrupted.SetInParent()
     elif event.type == "turn_end":
@@ -906,6 +914,12 @@ def _live_server_event_from_proto(pb, msg):
             name=msg.tool_call.name,
             input=_struct_value(msg.tool_call, "input") or {},
         )
+    if kind == "tool_call_delta":
+        return LiveServerToolCallDeltaEvent(
+            input_delta=msg.tool_call_delta.input_delta,
+            id=_wrapper_value(msg.tool_call_delta, "id"),
+            name=_wrapper_value(msg.tool_call_delta, "name"),
+        )
     if kind == "interrupted":
         return LiveServerInterruptedEvent()
     if kind == "turn_end":
@@ -1177,6 +1191,7 @@ def test_live_config_and_events_roundtrip(pb) -> None:
         LiveServerAudioEvent(data=_b64(b"audio")),
         LiveServerTextEvent(text="hello"),
         LiveServerToolCallEvent(id="call_1", name="lookup", input={"q": "x"}),
+        LiveServerToolCallDeltaEvent(input_delta="{\"q\"", id="call_1", name="lookup"),
         LiveServerInterruptedEvent(),
         LiveServerTurnEndEvent(
             usage=Usage(input_tokens=4, output_tokens=5, total_tokens=9),
@@ -1436,6 +1451,11 @@ def _image_generation_response_to_proto(pb, value: ImageGenerationResponse):
     for image in value.images:
         out.images.add().CopyFrom(_part_to_proto(pb, image).image)
     _copy_struct(out.provider_data, value.provider_data)
+    if value.id is not None:
+        _set_wrapper(out.id, value.id)
+    if value.model is not None:
+        _set_wrapper(out.model, value.model)
+    out.usage.CopyFrom(_usage_to_proto(pb, value.usage))
     return out
 
 
@@ -1448,6 +1468,9 @@ def _image_generation_response_from_proto(pb, msg):
             )
             for img in msg.images
         ),
+        id=_wrapper_value(msg, "id"),
+        model=_wrapper_value(msg, "model"),
+        usage=_usage_from_proto(pb, msg.usage),
         provider_data=_struct_value(msg, "provider_data"),
     )
 
@@ -1476,11 +1499,19 @@ def _audio_generation_response_to_proto(pb, value: AudioGenerationResponse):
     out = pb.AudioGenerationResponse()
     out.audio.CopyFrom(_part_to_proto(pb, value.audio).audio)
     _copy_struct(out.provider_data, value.provider_data)
+    if value.id is not None:
+        _set_wrapper(out.id, value.id)
+    if value.model is not None:
+        _set_wrapper(out.model, value.model)
+    out.usage.CopyFrom(_usage_to_proto(pb, value.usage))
     return out
 
 
 def _audio_generation_response_from_proto(pb, msg):
     return AudioGenerationResponse(
         audio=AudioPart(**_media_source_from_proto(msg.audio.source)),
+        id=_wrapper_value(msg, "id"),
+        model=_wrapper_value(msg, "model"),
+        usage=_usage_from_proto(pb, msg.usage),
         provider_data=_struct_value(msg, "provider_data"),
     )

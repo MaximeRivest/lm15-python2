@@ -1,0 +1,56 @@
+{
+  "cases": [
+    {"id": "part.text", "kind": "part", "value": {"type": "text", "text": "hello"}},
+    {"id": "part.image_url", "kind": "part", "value": {"type": "image", "media_type": "image/png", "url": "https://example.com/cat.png", "detail": "low"}},
+    {"id": "part.audio_data", "kind": "part", "value": {"type": "audio", "media_type": "audio/wav", "data": "aGk="}},
+    {"id": "part.video_file", "kind": "part", "value": {"type": "video", "media_type": "video/mp4", "file_id": "file_video"}},
+    {"id": "part.document_url", "kind": "part", "value": {"type": "document", "media_type": "application/pdf", "url": "https://example.com/doc.pdf"}},
+    {"id": "part.tool_call", "kind": "part", "value": {"type": "tool_call", "id": "call_1", "name": "lookup", "input": {"query": "weather"}}},
+    {"id": "part.tool_result", "kind": "part", "value": {"type": "tool_result", "id": "call_1", "name": "lookup", "content": [{"type": "text", "text": "sunny"}], "is_error": true}},
+    {"id": "part.thinking", "kind": "part", "value": {"type": "thinking", "text": "reasoning", "redacted": true}},
+    {"id": "part.refusal", "kind": "part", "value": {"type": "refusal", "text": "no"}},
+    {"id": "part.citation", "kind": "part", "value": {"type": "citation", "text": "Example", "url": "https://example.com", "title": "Example title"}},
+
+    {"id": "message.user_multimodal", "kind": "message", "value": {"role": "user", "parts": [{"type": "text", "text": "describe"}, {"type": "image", "media_type": "image/png", "url": "https://example.com/cat.png"}]}},
+    {"id": "message.assistant_tool_call", "kind": "message", "value": {"role": "assistant", "parts": [{"type": "tool_call", "id": "call_1", "name": "lookup", "input": {"query": "weather"}}]}},
+
+    {"id": "tool.function", "kind": "tool", "value": {"type": "function", "name": "lookup", "description": "Look up data", "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"id": "tool.builtin", "kind": "tool", "value": {"type": "builtin", "name": "web_search", "config": {"context_size": "low"}}},
+    {"id": "tool_choice.required", "kind": "tool_choice", "value": {"mode": "required", "allowed": ["lookup"], "parallel": false}},
+    {"id": "reasoning.medium", "kind": "reasoning", "value": {"effort": "medium", "thinking_budget": 128, "total_budget": 256}},
+    {"id": "config.full", "kind": "config", "value": {"max_tokens": 64, "temperature": 0.2, "top_p": 0.9, "top_k": 20, "stop": ["END"], "response_format": {"type": "json_object"}, "tool_choice": {"mode": "required", "allowed": ["lookup"]}, "reasoning": {"effort": "low"}, "extensions": {"store": false}}},
+    {"id": "error_detail.unsupported_model", "kind": "error_detail", "value": {"code": "unsupported_model", "message": "missing model", "provider_code": "model_not_found"}},
+
+    {"id": "delta.text", "kind": "delta", "value": {"type": "text", "text": "hi", "part_index": 0}},
+    {"id": "delta.thinking", "kind": "delta", "value": {"type": "thinking", "text": "hmm", "part_index": 1}},
+    {"id": "delta.audio", "kind": "delta", "value": {"type": "audio", "data": "aGk=", "media_type": "audio/wav", "part_index": 0}},
+    {"id": "delta.image", "kind": "delta", "value": {"type": "image", "url": "https://example.com/image.png", "media_type": "image/png", "part_index": 0}},
+    {"id": "delta.tool_call", "kind": "delta", "value": {"type": "tool_call", "input": "{\"query\":", "id": "call_1", "name": "lookup", "part_index": 0}},
+    {"id": "delta.citation", "kind": "delta", "value": {"type": "citation", "text": "Example", "url": "https://example.com", "title": "Example", "part_index": 2}},
+
+    {"id": "usage.full", "kind": "usage", "value": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15, "cache_read_tokens": 1, "cache_write_tokens": 2, "reasoning_tokens": 3, "input_audio_tokens": 4, "output_audio_tokens": 5}},
+    {"id": "stream.start", "kind": "stream_event", "value": {"type": "start", "id": "resp_1", "model": "m"}},
+    {"id": "stream.delta", "kind": "stream_event", "value": {"type": "delta", "delta": {"type": "text", "text": "hi", "part_index": 0}}},
+    {"id": "stream.end", "kind": "stream_event", "value": {"type": "end", "finish_reason": "stop", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}, "provider_data": {"provider": "test"}}},
+    {"id": "stream.error", "kind": "stream_event", "value": {"type": "error", "error": {"code": "transport", "message": "socket closed"}}},
+
+    {"id": "request.with_tools", "kind": "request", "value": {"model": "m", "messages": [{"role": "user", "parts": [{"type": "text", "text": "hello"}]}], "system": "be terse", "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}], "config": {"max_tokens": 32}}},
+    {"id": "response.with_citation", "kind": "response", "value": {"id": "resp_1", "model": "m", "message": {"role": "assistant", "parts": [{"type": "text", "text": "hello"}, {"type": "citation", "url": "https://example.com", "title": "Example"}]}, "finish_reason": "stop", "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2}}},
+
+    {"id": "audio_format.pcm16", "kind": "audio_format", "value": {"encoding": "pcm16", "sample_rate": 24000, "channels": 1}},
+    {"id": "live_config.full", "kind": "live_config", "value": {"model": "m", "system": "be helpful", "tools": [{"type": "function", "name": "lookup", "parameters": {"type": "object", "properties": {}}}], "voice": "alloy", "input_format": {"encoding": "pcm16", "sample_rate": 24000, "channels": 1}, "output_format": {"encoding": "opus", "sample_rate": 24000, "channels": 1}, "extensions": {"turn_detection": false}}},
+    {"id": "live_client.audio", "kind": "live_client_event", "value": {"type": "audio", "data": "aGk="}},
+    {"id": "live_client.video", "kind": "live_client_event", "value": {"type": "video", "data": "aGk="}},
+    {"id": "live_client.text", "kind": "live_client_event", "value": {"type": "text", "text": "hello"}},
+    {"id": "live_client.tool_result", "kind": "live_client_event", "value": {"type": "tool_result", "id": "call_1", "content": [{"type": "text", "text": "ok"}]}},
+    {"id": "live_client.interrupt", "kind": "live_client_event", "value": {"type": "interrupt"}},
+    {"id": "live_client.end_audio", "kind": "live_client_event", "value": {"type": "end_audio"}},
+    {"id": "live_server.audio", "kind": "live_server_event", "value": {"type": "audio", "data": "aGk="}},
+    {"id": "live_server.text", "kind": "live_server_event", "value": {"type": "text", "text": "hello"}},
+    {"id": "live_server.tool_call", "kind": "live_server_event", "value": {"type": "tool_call", "id": "call_1", "name": "lookup", "input": {"query": "weather"}}},
+    {"id": "live_server.tool_call_delta", "kind": "live_server_event", "value": {"type": "tool_call_delta", "id": "call_1", "name": "lookup", "input_delta": "{\"query\""}},
+    {"id": "live_server.interrupted", "kind": "live_server_event", "value": {"type": "interrupted"}},
+    {"id": "live_server.turn_end", "kind": "live_server_event", "value": {"type": "turn_end", "usage": {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}}},
+    {"id": "live_server.error", "kind": "live_server_event", "value": {"type": "error", "error": {"code": "provider", "message": "bad"}}}
+  ]
+}

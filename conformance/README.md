@@ -7,57 +7,89 @@ are frozen until this conformance suite is stable. Future ports should be built
 against these fixtures and only considered compatible when they pass the same
 checks.
 
-## What lives here
+## Layout
 
 ```text
 conformance/
-├── provider_requests/      # live-tested provider curl fixtures
-│   ├── cases/              # expected provider HTTP requests
-│   ├── features.yaml       # provider feature inventory and lm15/provider scope
-│   └── results/            # saved live-test summaries and response bodies
-├── cross_sdk/              # canonical logical cases + SDK dump adapters
-│   ├── test_cases.json     # logical lm15 requests generated from fixtures
-│   └── dump_request.py     # lm15-python2 logical case -> provider HTTP request
-├── check_request_fixtures.py
-└── reports/                # generated local reports, ignored by git
+├── README.md
+├── run_all.py                    # runs every check and writes summary.json
+├── check_request_fixtures.py     # logical case → provider HTTP request
+├── check_response_fixtures.py    # provider response/SSE → canonical Response
+├── check_error_fixtures.py       # provider error body → typed lm15 error
+├── check_endpoint_fixtures.py    # embeddings/files/batch/image/audio/live
+├── check_serde_fixtures.py       # canonical JSON + protobuf round-trips
+├── check_doc_drift.py            # unmapped doc params vs feature inventory
+├── cross_sdk/
+│   ├── test_cases.json           # canonical logical lm15 cases
+│   └── dump_request.py           # lm15-python2 logical case → HTTP request
+├── provider_requests/
+│   ├── cases/                    # live-tested provider curl fixtures
+│   ├── features.yaml             # feature inventory + lm15/provider scope
+│   ├── results/                  # saved live-test summaries and bodies
+│   └── validate_live.py          # re-run fixtures against the live API
+├── errors/cases/                 # provider error body → expected lm15 error
+├── serde/canonical.json          # canonical JSON serde fixtures
+├── provider_docs/                # snapshot of upstream API references
+└── reports/                      # generated local reports, ignored by git
 ```
 
-## Primary check
+## Run everything
 
 ```bash
-python3 conformance/check_request_fixtures.py
+python3 conformance/run_all.py --strict
 ```
 
-This compares the provider HTTP request built by lm15-python2 against the
-corresponding curl fixture.
-
-Useful options:
+Individual checks:
 
 ```bash
 python3 conformance/check_request_fixtures.py --strict
-python3 conformance/check_request_fixtures.py --case openai.basic_text
-python3 conformance/check_request_fixtures.py --json conformance/reports/request-fixtures.json
+python3 conformance/check_response_fixtures.py --strict
+python3 conformance/check_error_fixtures.py --strict
+python3 conformance/check_endpoint_fixtures.py --strict
+python3 conformance/check_serde_fixtures.py --strict
+python3 conformance/check_doc_drift.py --strict
 ```
 
-## Fixture model
+Each script writes both JSON and Markdown reports under
+`conformance/reports/`.
 
-- `provider_requests/cases/**.json` are the provider wire truth: method, URL,
-  headers, and request body known to work against the real API.
-- `cross_sdk/test_cases.json` contains canonical logical lm15 inputs derived
-  from those provider fixtures.
-- `cross_sdk/dump_request.py` is the reference adapter that turns logical input
-  into a normalized provider HTTP request without sending it.
+## What each check covers
+
+- **request_fixtures**
+  Compares the provider HTTP request built by lm15-python2 against the
+  live-tested provider curl fixture for every logical case.
+
+- **response_fixtures**
+  Replays saved provider response bodies and SSE streams through the lm15
+  parsers and checks them against per-fixture `expect_lm15` assertions.
+
+- **error_fixtures**
+  Feeds curated provider error bodies into each provider's `normalize_error`
+  and asserts the resulting structured lm15 error class, code, provider, and
+  metadata match.
+
+- **endpoint_fixtures**
+  Offline conformance for non-chat endpoints: embeddings, file upload, batch,
+  image generation, audio generation, plus live URL/header and session shape.
+
+- **serde_fixtures**
+  Round-trips canonical JSON fixtures and protobuf for every public lm15 type,
+  including endpoint request/response wrappers and live events.
+
+- **doc_drift**
+  Audits the snapshot of provider documentation under `provider_docs/` and
+  flags any documented top-level request parameters that have no corresponding
+  entry in `provider_requests/features.yaml`.
 
 ## Future ports
 
-Future Go/Rust/TypeScript/Julia ports should implement a tiny dump command with
-this contract:
+Future Go/Rust/TypeScript/Julia ports should implement a small dump command:
 
 ```bash
 <port-dump-command> '<logical-case-json>'
 ```
 
-It must emit normalized JSON with this shape:
+It must emit normalized JSON of this shape:
 
 ```json
 {
@@ -74,6 +106,6 @@ fixtures and against lm15-python2.
 
 ## Protobuf
 
-The protobuf schema in `../proto/` remains an optional machine-readable wire
-format. Canonical JSON fixtures are the primary conformance mechanism while the
-API is still evolving.
+The protobuf schema in `../proto/` is the language-neutral wire format.
+The canonical JSON fixtures in `serde/canonical.json` and the protobuf
+round-trip path in `check_serde_fixtures.py` keep them in sync.

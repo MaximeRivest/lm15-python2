@@ -351,6 +351,19 @@
       "stderr": null,
       "tested_at": "2026-04-13T14:49:23Z"
     },
+    "anthropic.web_search": {
+      "body_path": "results/bodies/anthropic.web_search/2026-04-29T14-59-56Z.txt",
+      "case_id": "anthropic.web_search",
+      "duration_seconds": 8.123,
+      "estimated_cost_usd": 0.109446,
+      "feature": "web_search",
+      "http_code": 200,
+      "provider": "anthropic",
+      "result": "pass",
+      "semantic_errors": null,
+      "stderr": null,
+      "tested_at": "2026-04-29T14:59:56Z"
+    },
     "gemini.audio_inline": {
       "body_path": "results/bodies/gemini.audio_inline/2026-04-13T14-49-25Z.txt",
       "case_id": "gemini.audio_inline",
@@ -1236,5 +1249,5 @@
       "tested_at": "2026-04-13T14:52:31Z"
     }
   },
-  "generated_at": "2026-04-29T14:09:19Z"
+  "generated_at": "2026-04-29T15:00:05Z"
 }

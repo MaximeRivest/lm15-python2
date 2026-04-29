@@ -156,6 +156,7 @@ def test_proto_has_language_neutral_endpoint_and_live_unions(tmp_path) -> None:
         "interrupted",
         "turn_end",
         "error",
+        "tool_call_delta",
     ]
 
 
