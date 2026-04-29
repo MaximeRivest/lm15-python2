@@ -118,7 +118,7 @@ class NotConfiguredError(ProviderError):
 def map_http_error(status: int, message: str) -> ProviderError:
     """Map HTTP status + message to a typed ProviderError.
 
-    Adapters extract the human-readable message from the provider's
+    LMs extract the human-readable message from the provider's
     error body in their normalize_error override.  This function
     only maps status codes.
     """
@@ -140,7 +140,7 @@ def map_http_error(status: int, message: str) -> ProviderError:
 # ─── Canonical error codes ───────────────────────────────────────────
 
 # Bidirectional mapping between error classes and string codes.
-# Codes are provider-agnostic and stable across adapters.
+# Codes are provider-agnostic and stable across LMs.
 
 _CLASS_TO_CODE: dict[type[ProviderError], str] = {
     ContextLengthError: "context_length",

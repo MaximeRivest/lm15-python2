@@ -33,7 +33,7 @@ Design principles:
 5. Runtime validation is deliberately narrow.  Constructors enforce the
    invariants that make objects meaningful (required identities, one media
    source, non-negative token counts, JSON-serializable extension fields)
-   while adapters remain responsible for normalizing provider quirks before
+   while LMs remain responsible for normalizing provider quirks before
    constructing these types.
 """
 
@@ -109,7 +109,7 @@ _MISSING: Any = object()
 
 # JSON-compatible values used for model inputs, tool schemas, provider
 # extensions, and provider metadata.  Keep these small and boring: the
-# adapter layer can map richer Python objects into this vocabulary before
+# LM layer can map richer Python objects into this vocabulary before
 # they enter the core model.
 JsonPrimitive: TypeAlias = None | bool | int | float | str
 JsonValue: TypeAlias = JsonPrimitive | list["JsonValue"] | dict[str, "JsonValue"]
@@ -887,7 +887,7 @@ class Message:
                       developer.  Can appear mid-conversation to inject
                       new instructions without invalidating the KV-cache
                       prefix.  On OpenAI this maps to the native
-                      ``developer`` role; on other providers the adapter
+                      ``developer`` role; on other providers the LM
                       converts it to a user message with a clear prefix.
     """
 
@@ -926,7 +926,7 @@ class Message:
         invalidating the KV-cache prefix built from earlier turns.
 
         On providers that don't natively support a developer role
-        (Anthropic, Gemini), the adapter converts these to user messages
+        (Anthropic, Gemini), the LM converts these to user messages
         with a clear ``[developer]`` prefix so the model still sees the
         instruction boundary.
         """
@@ -1345,7 +1345,7 @@ class Reasoning:
     reasoning off."  This tri-state is intentional because some providers
     and models have their own defaults.
 
-    Not all providers support every knob. The adapter maps to the
+    Not all providers support every knob. The LM maps to the
     closest available mechanism and reports degradation via warnings.
     """
 
@@ -1678,7 +1678,7 @@ class FileUploadRequest:
     Unlike most endpoint requests, ``model`` is optional because some
     providers scope file uploads to the account, not a specific model.
     Uploads can be backed by in-memory bytes or by a local path.  Path-backed
-    uploads are lazy: adapters can stream from disk instead of forcing the
+    uploads are lazy: LMs can stream from disk instead of forcing the
     whole file into memory at construction time.
     """
 

@@ -2,14 +2,14 @@
 Transport-level exceptions.
 
 These are distinct from lm15.errors (which are provider-level error taxonomy).
-Transport errors get wrapped/translated by the adapter layer into the
+Transport errors get wrapped/translated by the LM layer into the
 ProviderError hierarchy.
 """
 from __future__ import annotations
 
 
 class TransportError(Exception):
-    """Base transport error — network or protocol failure below the adapter layer."""
+    """Base transport error — network or protocol failure below the LM layer."""
 
 
 class ConnectError(TransportError):

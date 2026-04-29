@@ -5,6 +5,7 @@ requires-python = ">=3.10"
 
 [project.optional-dependencies]
 protobuf = ["protobuf>=5"]
+live = ["websockets>=12"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

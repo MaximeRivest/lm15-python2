@@ -1,5 +1,5 @@
 """
-lm15.protocols — Protocol definitions for adapters and sessions.
+lm15.protocols — Protocol definitions for provider LMs and sessions.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ class LiveSession(Protocol):
     def close(self) -> None: ...
 
 
-class LMAdapter(Protocol):
+class ProviderLM(Protocol):
     provider: str
     capabilities: Capabilities
     supports: EndpointSupport

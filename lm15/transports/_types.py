@@ -2,7 +2,7 @@
 Transport-level request/response models.
 
 These are intentionally minimal — they're the bytes-in/bytes-out interface
-between the adapter layer (which speaks the lm15 type system) and the
+between the LM layer (which speaks the lm15 type system) and the
 HTTP transport.
 """
 from __future__ import annotations
@@ -78,6 +78,23 @@ class Response:
     def read(self) -> bytes:
         return b"".join(self)
 
+    def iter_lines(self) -> Iterator[bytes]:
+        """Yield newline-terminated byte lines from arbitrary body chunks."""
+        buf = bytearray()
+        for chunk in self:
+            if not chunk:
+                continue
+            buf.extend(chunk)
+            while True:
+                idx = buf.find(b"\n")
+                if idx < 0:
+                    break
+                line = bytes(buf[: idx + 1])
+                del buf[: idx + 1]
+                yield line
+        if buf:
+            yield bytes(buf)
+
     def close(self) -> None:
         self._release_once(body_consumed=self._complete)
 
@@ -152,6 +169,23 @@ class AsyncResponse:
         async for c in self:
             buf.extend(c)
         return bytes(buf)
+
+    async def aiter_lines(self) -> AsyncIterator[bytes]:
+        """Yield newline-terminated byte lines from arbitrary body chunks."""
+        buf = bytearray()
+        async for chunk in self:
+            if not chunk:
+                continue
+            buf.extend(chunk)
+            while True:
+                idx = buf.find(b"\n")
+                if idx < 0:
+                    break
+                line = bytes(buf[: idx + 1])
+                del buf[: idx + 1]
+                yield line
+        if buf:
+            yield bytes(buf)
 
     async def aclose(self) -> None:
         await self._release_once(body_consumed=self._complete)

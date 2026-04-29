@@ -14,7 +14,7 @@ option java_package = "dev.lm15.v1";
 //
 // It intentionally models universal concepts only. Provider-specific request
 // knobs and response metadata belong in google.protobuf.Struct extension fields
-// and are interpreted by provider adapters.
+// and are interpreted by provider LMs.
 
 // ─── Enums ───────────────────────────────────────────────────────────
 
