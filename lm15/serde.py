@@ -28,10 +28,11 @@ from .types import (
     LiveClientAudioEvent,
     LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientImageEvent,
     LiveClientInterruptEvent,
     LiveClientTextEvent,
     LiveClientToolResultEvent,
-    LiveClientVideoEvent,
+    LiveClientTurnEvent,
     LiveConfig,
     LiveServerAudioEvent,
     LiveServerErrorEvent,
@@ -611,8 +612,10 @@ def live_config_from_dict(d: dict[str, Any]) -> LiveConfig:
 # ─── LiveClientEvent / LiveServerEvent ───────────────────────────────
 
 def live_client_event_to_dict(e: LiveClientEvent) -> dict[str, Any]:
-    if isinstance(e, (LiveClientAudioEvent, LiveClientVideoEvent)):
-        return {"type": e.type, "data": e.data}
+    if isinstance(e, LiveClientTurnEvent):
+        return {"type": e.type, "parts": [part_to_dict(p) for p in e.parts], "turn_complete": e.turn_complete}
+    if isinstance(e, (LiveClientAudioEvent, LiveClientImageEvent)):
+        return {"type": e.type, "data": e.data, "media_type": e.media_type}
     if isinstance(e, LiveClientTextEvent):
         return {"type": e.type, "text": e.text}
     if isinstance(e, LiveClientToolResultEvent):
@@ -624,10 +627,15 @@ def live_client_event_to_dict(e: LiveClientEvent) -> dict[str, Any]:
 
 def live_client_event_from_dict(d: dict[str, Any]) -> LiveClientEvent:
     t = d["type"]
+    if t == "turn":
+        return LiveClientTurnEvent(
+            parts=tuple(part_from_dict(p) for p in d.get("parts", [])),
+            turn_complete=d.get("turn_complete", True),
+        )
     if t == "audio":
-        return LiveClientAudioEvent(data=d["data"])
-    if t == "video":
-        return LiveClientVideoEvent(data=d["data"])
+        return LiveClientAudioEvent(data=d["data"], media_type=d.get("media_type", "audio/pcm;rate=16000"))
+    if t == "image":
+        return LiveClientImageEvent(data=d["data"], media_type=d.get("media_type", "image/jpeg"))
     if t == "text":
         return LiveClientTextEvent(text=d.get("text", ""))
     if t == "tool_result":
@@ -644,7 +652,7 @@ def live_client_event_from_dict(d: dict[str, Any]) -> LiveClientEvent:
 
 def live_server_event_to_dict(e: LiveServerEvent) -> dict[str, Any]:
     if isinstance(e, LiveServerAudioEvent):
-        return {"type": e.type, "data": e.data}
+        return _clean_mapping({"type": e.type, "data": e.data, "media_type": e.media_type})
     if isinstance(e, LiveServerTextEvent):
         return {"type": e.type, "text": e.text}
     if isinstance(e, LiveServerToolCallEvent):
@@ -668,7 +676,7 @@ def live_server_event_to_dict(e: LiveServerEvent) -> dict[str, Any]:
 def live_server_event_from_dict(d: dict[str, Any]) -> LiveServerEvent:
     t = d["type"]
     if t == "audio":
-        return LiveServerAudioEvent(data=d["data"])
+        return LiveServerAudioEvent(data=d["data"], media_type=d.get("media_type"))
     if t == "text":
         return LiveServerTextEvent(text=d.get("text", ""))
     if t == "tool_call":

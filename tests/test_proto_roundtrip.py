@@ -37,10 +37,11 @@ from lm15.types import (
     LiveClientAudioEvent,
     LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientImageEvent,
     LiveClientInterruptEvent,
     LiveClientTextEvent,
     LiveClientToolResultEvent,
-    LiveClientVideoEvent,
+    LiveClientTurnEvent,
     LiveConfig,
     LiveServerAudioEvent,
     LiveServerErrorEvent,
@@ -578,10 +579,15 @@ def _live_config_to_proto(pb, config: LiveConfig):
 
 def _live_client_event_to_proto(pb, event: LiveClientEvent):
     out = pb.LiveClientEvent()
-    if event.type == "audio":
+    if event.type == "turn":
+        out.turn.parts.extend(_part_to_proto(pb, p) for p in event.parts)
+        _set_wrapper(out.turn.turn_complete, event.turn_complete)
+    elif event.type == "audio":
         out.audio.data = base64.b64decode(event.data or "")
-    elif event.type == "video":
-        out.video.data = base64.b64decode(event.data or "")
+        out.audio.media_type = event.media_type
+    elif event.type == "image":
+        out.image.data = base64.b64decode(event.data or "")
+        out.image.media_type = event.media_type
     elif event.type == "text":
         out.text.text = event.text or ""
     elif event.type == "tool_result":
@@ -600,6 +606,8 @@ def _live_server_event_to_proto(pb, event: LiveServerEvent):
     out = pb.LiveServerEvent()
     if event.type == "audio":
         out.audio.data = base64.b64decode(event.data or "")
+        if event.media_type is not None:
+            _set_wrapper(out.audio.media_type, event.media_type)
     elif event.type == "text":
         out.text.text = event.text or ""
     elif event.type == "tool_call":
@@ -887,10 +895,15 @@ def _live_config_from_proto(pb, msg):
 
 def _live_client_event_from_proto(pb, msg):
     kind = msg.WhichOneof("event")
+    if kind == "turn":
+        return LiveClientTurnEvent(
+            parts=tuple(_part_from_proto(pb, p) for p in msg.turn.parts),
+            turn_complete=_wrapper_value(msg.turn, "turn_complete") if msg.turn.HasField("turn_complete") else True,
+        )
     if kind == "audio":
-        return LiveClientAudioEvent(data=_b64(msg.audio.data))
-    if kind == "video":
-        return LiveClientVideoEvent(data=_b64(msg.video.data))
+        return LiveClientAudioEvent(data=_b64(msg.audio.data), media_type=msg.audio.media_type or "audio/pcm;rate=16000")
+    if kind == "image":
+        return LiveClientImageEvent(data=_b64(msg.image.data), media_type=msg.image.media_type or "image/jpeg")
     if kind == "text":
         return LiveClientTextEvent(text=msg.text.text)
     if kind == "tool_result":
@@ -908,7 +921,7 @@ def _live_client_event_from_proto(pb, msg):
 def _live_server_event_from_proto(pb, msg):
     kind = msg.WhichOneof("event")
     if kind == "audio":
-        return LiveServerAudioEvent(data=_b64(msg.audio.data))
+        return LiveServerAudioEvent(data=_b64(msg.audio.data), media_type=_wrapper_value(msg.audio, "media_type"))
     if kind == "text":
         return LiveServerTextEvent(text=msg.text.text)
     if kind == "tool_call":
@@ -1180,8 +1193,9 @@ def test_live_config_and_events_roundtrip(pb) -> None:
     _assert_py_proto_py(config, _live_config_to_proto, _live_config_from_proto, pb)
 
     client_events = [
-        LiveClientAudioEvent(data=_b64(b"audio")),
-        LiveClientVideoEvent(data=_b64(b"video")),
+        LiveClientTurnEvent(parts=(TextPart("hello"), ImagePart(data=_b64(b"image"), media_type="image/png"))),
+        LiveClientAudioEvent(data=_b64(b"audio"), media_type="audio/pcm;rate=16000"),
+        LiveClientImageEvent(data=_b64(b"image"), media_type="image/png"),
         LiveClientTextEvent(text="hello"),
         LiveClientToolResultEvent(id="call_1", content=(TextPart("ok"),)),
         LiveClientInterruptEvent(),
@@ -1191,7 +1205,7 @@ def test_live_config_and_events_roundtrip(pb) -> None:
         _assert_py_proto_py(event, _live_client_event_to_proto, _live_client_event_from_proto, pb)
 
     server_events = [
-        LiveServerAudioEvent(data=_b64(b"audio")),
+        LiveServerAudioEvent(data=_b64(b"audio"), media_type="audio/pcm;rate=24000"),
         LiveServerTextEvent(text="hello"),
         LiveServerToolCallEvent(id="call_1", name="lookup", input={"q": "x"}),
         LiveServerToolCallDeltaEvent(input_delta="{\"q\"", id="call_1", name="lookup"),

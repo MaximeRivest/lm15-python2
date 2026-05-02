@@ -142,8 +142,9 @@ def test_proto_has_language_neutral_endpoint_and_live_unions(tmp_path) -> None:
         "audio_generation_response",
     ]
     assert _oneof_fields(messages["LiveClientEvent"], "event") == [
+        "turn",
         "audio",
-        "video",
+        "image",
         "text",
         "tool_result",
         "interrupt",

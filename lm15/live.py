@@ -21,16 +21,19 @@ from .types import (
     LiveClientAudioEvent,
     LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientImageEvent,
     LiveClientInterruptEvent,
     LiveClientTextEvent,
     LiveClientToolResultEvent,
-    LiveClientVideoEvent,
+    LiveClientTurnEvent,
     LiveServerEvent,
     PART_CLASSES,
     Part,
+    PartInput,
     TextPart,
     ToolCallInfo,
     ToolRegistry,
+    _normalize_parts,
 )
 
 EncodeEventFn = Callable[[LiveClientEvent], list[dict[str, Any]]]
@@ -79,8 +82,11 @@ class WebSocketLiveSession:
         event: LiveClientEvent | None = None,
         *,
         audio: bytes | str | None = None,
-        video: bytes | str | None = None,
+        audio_media_type: str = "audio/pcm;rate=16000",
+        image: bytes | str | None = None,
+        image_media_type: str = "image/jpeg",
         text: str | None = None,
+        turn: PartInput | None = None,
         tool_result: dict[str, Any] | None = None,
         interrupt: bool = False,
         end_audio: bool = False,
@@ -89,14 +95,21 @@ class WebSocketLiveSession:
             raise RuntimeError("live session is closed")
 
         if event is not None:
-            has_payload = any(x is not None for x in (audio, video, text, tool_result))
+            has_payload = any(x is not None for x in (audio, image, text, turn, tool_result))
             if has_payload or interrupt or end_audio:
                 raise ValueError("pass either `event` or keyword payload, not both")
             events = [event]
         else:
             events = self._events_from_kwargs(
-                audio=audio, video=video, text=text,
-                tool_result=tool_result, interrupt=interrupt, end_audio=end_audio,
+                audio=audio,
+                audio_media_type=audio_media_type,
+                image=image,
+                image_media_type=image_media_type,
+                text=text,
+                turn=turn,
+                tool_result=tool_result,
+                interrupt=interrupt,
+                end_audio=end_audio,
             )
 
         with self._send_lock:
@@ -104,6 +117,27 @@ class WebSocketLiveSession:
                 payloads = self._encode_event(evt)
                 for payload in payloads:
                     self._ws.send(json.dumps(payload))
+
+    def send_turn(self, content: PartInput, *, turn_complete: bool = True) -> None:
+        self.send(LiveClientTurnEvent(parts=_normalize_parts(content), turn_complete=turn_complete))
+
+    def send_audio(self, data: bytes | str, *, media_type: str = "audio/pcm;rate=16000") -> None:
+        self.send(LiveClientAudioEvent(data=_to_base64_str(data), media_type=media_type))
+
+    def send_image(self, data: bytes | str, *, media_type: str = "image/jpeg") -> None:
+        self.send(LiveClientImageEvent(data=_to_base64_str(data), media_type=media_type))
+
+    def send_text(self, text: str) -> None:
+        self.send(LiveClientTextEvent(text=text))
+
+    def send_tool_result(self, results: dict[str, Any]) -> None:
+        self.send(tool_result=results)
+
+    def interrupt(self) -> None:
+        self.send(interrupt=True)
+
+    def end_audio(self) -> None:
+        self.send(end_audio=True)
 
     def recv(self) -> LiveServerEvent:
         if self._closed:
@@ -152,8 +186,11 @@ class WebSocketLiveSession:
         self,
         *,
         audio: bytes | str | None,
-        video: bytes | str | None,
+        audio_media_type: str,
+        image: bytes | str | None,
+        image_media_type: str,
         text: str | None,
+        turn: PartInput | None,
         tool_result: dict[str, Any] | None,
         interrupt: bool,
         end_audio: bool,
@@ -161,9 +198,11 @@ class WebSocketLiveSession:
         events: list[LiveClientEvent] = []
 
         if audio is not None:
-            events.append(LiveClientAudioEvent(data=_to_base64_str(audio)))
-        if video is not None:
-            events.append(LiveClientVideoEvent(data=_to_base64_str(video)))
+            events.append(LiveClientAudioEvent(data=_to_base64_str(audio), media_type=audio_media_type))
+        if image is not None:
+            events.append(LiveClientImageEvent(data=_to_base64_str(image), media_type=image_media_type))
+        if turn is not None:
+            events.append(LiveClientTurnEvent(parts=_normalize_parts(turn)))
         if text is not None:
             events.append(LiveClientTextEvent(text=text))
 
@@ -216,6 +255,27 @@ class AsyncLiveSession:
 
     async def send(self, event: LiveClientEvent | None = None, **kwargs: Any) -> None:
         await asyncio.to_thread(self._session.send, event, **kwargs)
+
+    async def send_turn(self, content: PartInput, *, turn_complete: bool = True) -> None:
+        await asyncio.to_thread(self._session.send_turn, content, turn_complete=turn_complete)
+
+    async def send_audio(self, data: bytes | str, *, media_type: str = "audio/pcm;rate=16000") -> None:
+        await asyncio.to_thread(self._session.send_audio, data, media_type=media_type)
+
+    async def send_image(self, data: bytes | str, *, media_type: str = "image/jpeg") -> None:
+        await asyncio.to_thread(self._session.send_image, data, media_type=media_type)
+
+    async def send_text(self, text: str) -> None:
+        await asyncio.to_thread(self._session.send_text, text)
+
+    async def send_tool_result(self, results: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._session.send_tool_result, results)
+
+    async def interrupt(self) -> None:
+        await asyncio.to_thread(self._session.interrupt)
+
+    async def end_audio(self) -> None:
+        await asyncio.to_thread(self._session.end_audio)
 
     async def recv(self) -> LiveServerEvent:
         return await asyncio.to_thread(self._session.recv)

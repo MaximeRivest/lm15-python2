@@ -52,10 +52,11 @@ from ..types import (
     LiveClientAudioEvent,
     LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientImageEvent,
     LiveClientInterruptEvent,
     LiveClientTextEvent,
     LiveClientToolResultEvent,
-    LiveClientVideoEvent,
+    LiveClientTurnEvent,
     LiveConfig,
     LiveServerAudioEvent,
     LiveServerErrorEvent,
@@ -1090,10 +1091,12 @@ class GeminiLM(BaseProviderLM):
         )
 
     def _encode_live_client_event(self, event: LiveClientEvent) -> list[dict[str, Any]]:
+        if isinstance(event, LiveClientTurnEvent):
+            return [{"clientContent": {"turns": [{"role": "user", "parts": [self._part(part) for part in event.parts]}], "turnComplete": event.turn_complete}}]
         if isinstance(event, LiveClientAudioEvent):
-            return [{"realtimeInput": {"audio": {"mimeType": "audio/pcm", "data": event.data}}}]
-        if isinstance(event, LiveClientVideoEvent):
-            return [{"realtimeInput": {"video": {"mimeType": "video/mp4", "data": event.data}}}]
+            return [{"realtimeInput": {"audio": {"mimeType": event.media_type, "data": event.data}}}]
+        if isinstance(event, LiveClientImageEvent):
+            return [{"realtimeInput": {"video": {"mimeType": event.media_type, "data": event.data}}}]
         if isinstance(event, LiveClientInterruptEvent):
             return [{"clientContent": {"turnComplete": True}}]
         if isinstance(event, LiveClientEndAudioEvent):
@@ -1135,7 +1138,7 @@ class GeminiLM(BaseProviderLM):
                     inline = part["inlineData"]
                     mime = str(inline.get("mimeType") or "")
                     if mime.startswith("audio/"):
-                        events.append(LiveServerAudioEvent(data=str(inline.get("data") or "")))
+                        events.append(LiveServerAudioEvent(data=str(inline.get("data") or ""), media_type=mime or None))
                 elif "functionCall" in part and isinstance(part["functionCall"], dict):
                     fc = part["functionCall"]
                     events.append(LiveServerToolCallEvent(id=str(fc.get("id") or "fc_0"), name=str(fc.get("name") or "tool"), input=fc.get("args") if isinstance(fc.get("args"), dict) else {}))

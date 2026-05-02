@@ -482,21 +482,29 @@ message LiveConfig {
 
 message LiveClientEvent {
   oneof event {
-    LiveClientAudio audio = 1;
-    LiveClientVideo video = 2;
-    LiveClientText text = 3;
-    LiveClientToolResult tool_result = 4;
-    LiveClientInterrupt interrupt = 5;
-    LiveClientEndAudio end_audio = 6;
+    LiveClientTurn turn = 1;
+    LiveClientAudio audio = 2;
+    LiveClientImage image = 3;
+    LiveClientText text = 4;
+    LiveClientToolResult tool_result = 5;
+    LiveClientInterrupt interrupt = 6;
+    LiveClientEndAudio end_audio = 7;
   }
+}
+
+message LiveClientTurn {
+  repeated Part parts = 1;
+  google.protobuf.BoolValue turn_complete = 2;
 }
 
 message LiveClientAudio {
   bytes data = 1;
+  string media_type = 2;
 }
 
-message LiveClientVideo {
+message LiveClientImage {
   bytes data = 1;
+  string media_type = 2;
 }
 
 message LiveClientText {
@@ -526,6 +534,7 @@ message LiveServerEvent {
 
 message LiveServerAudio {
   bytes data = 1;
+  google.protobuf.StringValue media_type = 2;
 }
 
 message LiveServerText {

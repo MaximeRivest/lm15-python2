@@ -99,7 +99,7 @@ StreamEventType = Literal["start", "delta", "end", "error"]
 BatchStatus = Literal["submitted", "queued", "running", "completed", "failed", "cancelled"]
 AudioEncoding = Literal["pcm16", "opus", "mp3", "aac"]
 ToolChoiceMode = Literal["auto", "required", "none"]
-LiveClientEventType = Literal["audio", "video", "text", "tool_result", "interrupt", "end_audio"]
+LiveClientEventType = Literal["turn", "audio", "image", "text", "tool_result", "interrupt", "end_audio"]
 LiveServerEventType = Literal["audio", "text", "tool_call", "tool_call_delta", "interrupted", "turn_end", "error"]
 
 ROLE_VALUES = frozenset(get_args(Role))
@@ -2015,23 +2015,49 @@ class LiveConfig(_ModelRequest):
 
 
 @dataclass(frozen=True, slots=True)
+class LiveClientTurnEvent:
+    parts: tuple[PromptPart, ...]
+    turn_complete: bool = True
+    type: Literal["turn"] = field(default="turn", init=False)
+
+    def __post_init__(self) -> None:
+        parts = (self.parts,) if _is_part(self.parts) else tuple(self.parts)
+        object.__setattr__(self, "parts", parts)
+        if not self.parts:
+            raise ValueError("LiveClientTurnEvent requires at least one part")
+        if not all(_is_part(p) for p in self.parts):
+            raise TypeError("LiveClientTurnEvent.parts must contain Part objects")
+        if any(isinstance(p, _PROMPT_FORBIDDEN_PARTS) for p in self.parts):
+            raise TypeError("LiveClientTurnEvent.parts cannot contain model/tool protocol parts")
+        _validate_bool(self.turn_complete, field_name="LiveClientTurnEvent.turn_complete")
+
+
+@dataclass(frozen=True, slots=True)
 class LiveClientAudioEvent:
     data: str
+    media_type: str = "audio/pcm;rate=16000"
     type: Literal["audio"] = field(default="audio", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.data, field_name="LiveClientAudioEvent.data", allow_empty=False)
         _validate_base64_data("LiveClientAudioEvent", self.data)
+        _validate_text(self.media_type, field_name="LiveClientAudioEvent.media_type", allow_empty=False)
+        if not self.media_type.startswith("audio/"):
+            raise ValueError("LiveClientAudioEvent.media_type must start with 'audio/'")
 
 
 @dataclass(frozen=True, slots=True)
-class LiveClientVideoEvent:
+class LiveClientImageEvent:
     data: str
-    type: Literal["video"] = field(default="video", init=False)
+    media_type: str = "image/jpeg"
+    type: Literal["image"] = field(default="image", init=False)
 
     def __post_init__(self) -> None:
-        _validate_text(self.data, field_name="LiveClientVideoEvent.data", allow_empty=False)
-        _validate_base64_data("LiveClientVideoEvent", self.data)
+        _validate_text(self.data, field_name="LiveClientImageEvent.data", allow_empty=False)
+        _validate_base64_data("LiveClientImageEvent", self.data)
+        _validate_text(self.media_type, field_name="LiveClientImageEvent.media_type", allow_empty=False)
+        if not self.media_type.startswith("image/"):
+            raise ValueError("LiveClientImageEvent.media_type must start with 'image/'")
 
 
 @dataclass(frozen=True, slots=True)
@@ -2071,8 +2097,9 @@ class LiveClientEndAudioEvent:
 
 
 LiveClientEvent: TypeAlias = (
-    LiveClientAudioEvent
-    | LiveClientVideoEvent
+    LiveClientTurnEvent
+    | LiveClientAudioEvent
+    | LiveClientImageEvent
     | LiveClientTextEvent
     | LiveClientToolResultEvent
     | LiveClientInterruptEvent
@@ -2084,11 +2111,15 @@ LIVE_CLIENT_EVENT_CLASSES: tuple[type, ...] = get_args(LiveClientEvent)
 @dataclass(frozen=True, slots=True)
 class LiveServerAudioEvent:
     data: str
+    media_type: str | None = None
     type: Literal["audio"] = field(default="audio", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.data, field_name="LiveServerAudioEvent.data", allow_empty=False)
         _validate_base64_data("LiveServerAudioEvent", self.data)
+        _validate_optional_text(self.media_type, field_name="LiveServerAudioEvent.media_type", allow_empty=False)
+        if self.media_type is not None and not self.media_type.startswith("audio/"):
+            raise ValueError("LiveServerAudioEvent.media_type must start with 'audio/'")
 
 
 @dataclass(frozen=True, slots=True)

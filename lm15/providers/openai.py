@@ -48,10 +48,11 @@ from ..types import (
     LiveClientAudioEvent,
     LiveClientEndAudioEvent,
     LiveClientEvent,
+    LiveClientImageEvent,
     LiveClientInterruptEvent,
     LiveClientTextEvent,
     LiveClientToolResultEvent,
-    LiveClientVideoEvent,
+    LiveClientTurnEvent,
     LiveConfig,
     LiveServerAudioEvent,
     LiveServerErrorEvent,
@@ -935,9 +936,16 @@ class OpenAILM(BaseProviderLM):
                 {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": event.text}]}},
                 {"type": "response.create"},
             ]
-        if isinstance(event, LiveClientVideoEvent):
+        if isinstance(event, LiveClientTurnEvent):
             return [
-                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_image", "image_url": f"data:image/jpeg;base64,{event.data}"}]}},
+                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [part_to_openai_input(part) for part in event.parts]}},
+                {"type": "response.create"},
+            ] if event.turn_complete else [
+                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [part_to_openai_input(part) for part in event.parts]}},
+            ]
+        if isinstance(event, LiveClientImageEvent):
+            return [
+                {"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_image", "image_url": f"data:{event.media_type};base64,{event.data}"}]}},
                 {"type": "response.create"},
             ]
         if isinstance(event, LiveClientToolResultEvent):

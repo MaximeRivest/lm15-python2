@@ -162,7 +162,7 @@ def pretty(value, *, width=100):
     """Pretty-print nested execute() results in notebooks/scripts."""
     pprint.pp(value, width=width, sort_dicts=False, compact=False)
 ```
-```output | ✓ 5ms | 21 vars
+```output | ✓ 15ms | 21 vars
 Loaded .env from: /home/maxime/Projects/lm15-dev/.env
   OPENAI_API_KEY: sk-proj...mtMA
   ANTHROPIC_API_KEY: sk-ant-...awAA
@@ -189,7 +189,7 @@ req_basic = Request(
 r = execute(req_basic)
 pretty(r)
 ```
-```output | ✓ 5.9s | 30 vars
+```output | ✓ 10.7s | 25 vars
 {'responses': [{'provider': 'openai',
                 'model': 'gpt-5.4-mini',
                 'response': Response(
@@ -197,7 +197,7 @@ pretty(r)
     model='gpt-5.4-mini-2026-03-17',
     finish_reason='stop',
     usage=Usage(input_tokens=9, output_tokens=6, total_tokens=15, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
-    id='resp_0f6b2743f87144650069f26b3c5908819095b4e898d9668249',
+    id='resp_08f99935c43e7aff0069f5e804f218819caec290d2ffa9b748',
     provider_data=<dict: 35 keys>,
 )},
                {'provider': 'anthropic',
@@ -207,7 +207,7 @@ pretty(r)
     model='claude-sonnet-4-5-20250929',
     finish_reason='stop',
     usage=Usage(input_tokens=10, output_tokens=12, total_tokens=22, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
-    id='msg_01X7qUu6pmsJ4HRrCDfn6yYd',
+    id='msg_01K22PnHyDnhWFiKZQ6ubgE7',
     provider_data=<dict: 9 keys>,
 )},
                {'provider': 'gemini',
@@ -216,13 +216,13 @@ pretty(r)
     text='Hello! How can I help you today?',
     model='gemini-3-flash-preview',
     finish_reason='stop',
-    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=52, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=39, input_audio_tokens=None, output_audio_tokens=None),
-    id='QWvyaa3uCOuV_uMPjc_eoAk',
+    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=32, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=19, input_audio_tokens=None, output_audio_tokens=None),
+    id='DOj1afXsNJ23_uMPmubiwAs',
     provider_data=<dict: 4 keys>,
 )}],
  'streams': [{'provider': 'openai',
               'model': 'gpt-5.4-mini',
-              'events': [StreamStartEvent(id='resp_00e27c18a35c46550069f26b3d4918819699752b1df80b0af6',
+              'events': [StreamStartEvent(id='resp_08884db5bc096a930069f5e80909cc819683f8628200065af7',
                                           model='gpt-5.4-mini-2026-03-17',
                                           type='start'),
                          StreamDeltaEvent(delta=TextDelta(text='Hello', part_index=0, type='text'),
@@ -237,14 +237,14 @@ pretty(r)
 )]},
              {'provider': 'anthropic',
               'model': 'claude-sonnet-4-5',
-              'events': [StreamStartEvent(id='msg_01Fj3TG729vCPCi6qGSmroYr',
+              'events': [StreamStartEvent(id='msg_01E56JDJZVCpu1hEX5WaWCaX',
                                           model='claude-sonnet-4-5-20250929',
                                           type='start'),
-                         StreamDeltaEvent(delta=TextDelta(text='Hello! How can',
+                         StreamDeltaEvent(delta=TextDelta(text='Hello! How',
                                                           part_index=0,
                                                           type='text'),
                                           type='delta'),
-                         StreamDeltaEvent(delta=TextDelta(text=' I help you today?',
+                         StreamDeltaEvent(delta=TextDelta(text=' can I help you today?',
                                                           part_index=0,
                                                           type='text'),
                                           type='delta'),
@@ -262,7 +262,7 @@ pretty(r)
                                           type='delta'),
                          StreamEndEvent(
     finish_reason='stop',
-    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=57, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=44, input_audio_tokens=None, output_audio_tokens=None),
+    usage=Usage(input_tokens=4, output_tokens=9, total_tokens=90, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=77, input_audio_tokens=None, output_audio_tokens=None),
     provider_data=<dict: 4 keys>,
     type='end',
 )]}],
@@ -282,7 +282,7 @@ req_multi = Request(
 r = execute(req_multi)
 pretty(r)
 ```
-```output
+```output | ✓ 7.0s | 26 vars
 {'responses': [{'provider': 'openai',
                 'model': 'gpt-5.4-mini',
                 'response': Response(
@@ -290,7 +290,7 @@ pretty(r)
     model='gpt-5.4-mini-2026-03-17',
     finish_reason='stop',
     usage=Usage(input_tokens=37, output_tokens=6, total_tokens=43, cache_read_tokens=0, cache_write_tokens=None, reasoning_tokens=0, input_audio_tokens=None, output_audio_tokens=None),
-    id='resp_08a35d847d09e2620069f219c225788196b973500e06ae1de6',
+    id='resp_020bdb40c0dd01e10069f5e81e221081a392e687362dce7da8',
     provider_data=<dict: 35 keys>,
 )},
                {'provider': 'anthropic',
@@ -300,7 +300,7 @@ pretty(r)
     model='claude-sonnet-4-5-20250929',
     finish_reason='stop',
     usage=Usage(input_tokens=36, output_tokens=5, total_tokens=41, cache_read_tokens=0, cache_write_tokens=0, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
-    id='msg_0146dnoWm2HgbphEDLLmqVW7',
+    id='msg_01K3qCQDyhHE9tRfdDShVguo',
     provider_data=<dict: 9 keys>,
 )},
                {'provider': 'gemini',
@@ -309,13 +309,13 @@ pretty(r)
     text='FOUR',
     model='gemini-3-flash-preview',
     finish_reason='stop',
-    usage=Usage(input_tokens=24, output_tokens=1, total_tokens=98, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=73, input_audio_tokens=None, output_audio_tokens=None),
-    id='zRnyaZijEMmt1MkPwI2LsQk',
+    usage=Usage(input_tokens=24, output_tokens=1, total_tokens=86, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=61, input_audio_tokens=None, output_audio_tokens=None),
+    id='I-j1aZjtKpG9_uMP7pfNoQo',
     provider_data=<dict: 4 keys>,
 )}],
  'streams': [{'provider': 'openai',
               'model': 'gpt-5.4-mini',
-              'events': [StreamStartEvent(id='resp_0b28cc15ee52b9230069f219c4473881978329ed80ac49680e',
+              'events': [StreamStartEvent(id='resp_0d6f6951ab50741e0069f5e81ff8208195935e859958e4f6ce',
                                           model='gpt-5.4-mini-2026-03-17',
                                           type='start'),
                          StreamDeltaEvent(delta=TextDelta(text='FO', part_index=0, type='text'),
@@ -330,7 +330,7 @@ pretty(r)
 )]},
              {'provider': 'anthropic',
               'model': 'claude-sonnet-4-5',
-              'events': [StreamStartEvent(id='msg_01HPBwwcK3ESBrmrNzRXuqgM',
+              'events': [StreamStartEvent(id='msg_01Qz7C9eASgBJhLhGTLc8iUe',
                                           model='claude-sonnet-4-5-20250929',
                                           type='start'),
                          StreamDeltaEvent(delta=TextDelta(text='FOUR', part_index=0, type='text'),
@@ -347,14 +347,11 @@ pretty(r)
                                           type='delta'),
                          StreamEndEvent(
     finish_reason='stop',
-    usage=Usage(input_tokens=24, output_tokens=1, total_tokens=146, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=121, input_audio_tokens=None, output_audio_tokens=None),
+    usage=Usage(input_tokens=24, output_tokens=1, total_tokens=126, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=101, input_audio_tokens=None, output_audio_tokens=None),
     provider_data=<dict: 4 keys>,
     type='end',
 )]}],
  'errors': []}
-
-
-⏳ running…
 ```
 
 ```py

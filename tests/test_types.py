@@ -24,7 +24,10 @@ from lm15.types import (
     ImageDelta,
     ImageGenerationRequest,
     ImagePart,
+    LiveClientAudioEvent,
+    LiveClientImageEvent,
     LiveClientToolResultEvent,
+    LiveClientTurnEvent,
     LiveServerInterruptedEvent,
     LiveServerToolCallDeltaEvent,
     Message,
@@ -395,6 +398,21 @@ def test_tool_result_rejects_thinking_and_protocol_parts() -> None:
             content=(TextPart("ok"),),
             is_error=None,  # type: ignore[arg-type]
         )
+
+
+def test_live_media_events_require_matching_media_type_prefixes() -> None:
+    LiveClientAudioEvent(data=_b64(b"audio"), media_type="audio/pcm;rate=16000")
+    LiveClientImageEvent(data=_b64(b"image"), media_type="image/jpeg")
+    with pytest.raises(ValueError, match="audio/"):
+        LiveClientAudioEvent(data=_b64(b"audio"), media_type="image/jpeg")
+    with pytest.raises(ValueError, match="image/"):
+        LiveClientImageEvent(data=_b64(b"image"), media_type="video/mp4")
+
+
+def test_live_turn_event_reuses_prompt_part_validation() -> None:
+    LiveClientTurnEvent(parts=(TextPart("hello"), ImagePart(data=_b64(b"image"))))
+    with pytest.raises(TypeError, match="protocol parts"):
+        LiveClientTurnEvent(parts=(ToolCallPart(id="c", name="tool", input={}),))
 
 
 def test_live_client_tool_result_rejects_model_and_protocol_parts() -> None:

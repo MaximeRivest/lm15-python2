@@ -12,6 +12,9 @@ from lm15.types import (
     CitationPart,
     Config,
     FunctionTool,
+    ImagePart,
+    LiveClientImageEvent,
+    LiveClientTurnEvent,
     Message,
     Reasoning,
     Request,
@@ -437,6 +440,35 @@ def test_anthropic_reasoning_max_tokens_adds_explicit_visible_budget() -> None:
 
     assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
     assert payload["max_tokens"] == 1224
+
+
+def test_gemini_live_image_event_uses_image_mime_as_realtime_frame() -> None:
+    lm = GeminiLM(api_key="sk-gem", transport=_FakeTransport())
+    event = LiveClientImageEvent(data="aGk=", media_type="image/jpeg")
+
+    payload = lm._encode_live_client_event(event)
+
+    assert payload == [{"realtimeInput": {"video": {"mimeType": "image/jpeg", "data": "aGk="}}}]
+
+
+def test_gemini_live_turn_event_reuses_prompt_parts() -> None:
+    lm = GeminiLM(api_key="sk-gem", transport=_FakeTransport())
+    event = LiveClientTurnEvent(parts=(TextPart("look"), ImagePart(data="aGk=", media_type="image/png")))
+
+    payload = lm._encode_live_client_event(event)
+
+    assert payload == [{
+        "clientContent": {
+            "turns": [{
+                "role": "user",
+                "parts": [
+                    {"text": "look"},
+                    {"inlineData": {"mimeType": "image/png", "data": "aGk="}},
+                ],
+            }],
+            "turnComplete": True,
+        }
+    }]
 
 
 def test_gemini_stream_event_can_emit_delta_and_end_from_one_sse() -> None:
