@@ -19,6 +19,8 @@ from .types import (
     CitationDelta,
     CitationPart,
     Config,
+    ContinuationDelta,
+    ContinuationState,
     Delta,
     DocumentPart,
     ErrorDetail,
@@ -103,6 +105,43 @@ def _clean_mapping(values: dict[str, Any]) -> dict[str, Any]:
 
 
 
+# ─── Continuation state ──────────────────────────────────────────────
+
+def continuation_to_dict(state: ContinuationState) -> dict[str, Any]:
+    return {
+        "provider": state.provider,
+        "kind": state.kind,
+        "data": state.data,
+    }
+
+
+def continuation_from_dict(d: dict[str, Any]) -> ContinuationState:
+    return ContinuationState(
+        provider=d["provider"],
+        kind=d["kind"],
+        data=d.get("data", {}),
+    )
+
+
+def _continuation_to_json(values: tuple[ContinuationState, ...]) -> list[dict[str, Any]] | None:
+    if not values:
+        return None
+    return [continuation_to_dict(state) for state in values]
+
+
+def _continuation_from_json(value: Any) -> tuple[ContinuationState, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise TypeError("continuation must be a list")
+    states: list[ContinuationState] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise TypeError("continuation entries must be objects")
+        states.append(continuation_from_dict(item))
+    return tuple(states)
+
+
 # ─── Parts ───────────────────────────────────────────────────────────
 
 def part_to_dict(part: Part) -> dict[str, Any]:
@@ -154,6 +193,10 @@ def part_to_dict(part: Part) -> dict[str, Any]:
         if part.is_error:
             d["is_error"] = part.is_error
 
+    continuation = _continuation_to_json(part.continuation)
+    if continuation is not None:
+        d["continuation"] = continuation
+
     return d
 
 
@@ -161,17 +204,19 @@ def part_from_dict(d: dict[str, Any]) -> Part:
     """Deserialize a Part from the canonical lm15 JSON format."""
     t = d["type"]
 
+    continuation = _continuation_from_json(d.get("continuation"))
+
     if t == "text":
-        return TextPart(text=d.get("text", ""))
+        return TextPart(text=d.get("text", ""), continuation=continuation)
 
     if t == "thinking":
-        return ThinkingPart(text=d.get("text", ""), redacted=d.get("redacted", False))
+        return ThinkingPart(text=d.get("text", ""), redacted=d.get("redacted", False), continuation=continuation)
 
     if t == "refusal":
-        return RefusalPart(text=d.get("text", ""))
+        return RefusalPart(text=d.get("text", ""), continuation=continuation)
 
     if t == "citation":
-        return CitationPart(text=d.get("text"), url=d.get("url"), title=d.get("title"))
+        return CitationPart(text=d.get("text"), url=d.get("url"), title=d.get("title"), continuation=continuation)
 
     if t in ("image", "audio", "video", "document", "binary"):
         cls = PART_TYPES[t]
@@ -181,6 +226,7 @@ def part_from_dict(d: dict[str, Any]) -> Part:
             "url": d.get("url"),
             "file_id": d.get("file_id"),
             "path": d.get("path"),
+            "continuation": continuation,
         }
         if t == "image":
             kwargs["detail"] = d.get("detail")
@@ -191,6 +237,7 @@ def part_from_dict(d: dict[str, Any]) -> Part:
             id=d["id"],
             name=d["name"],
             input=d.get("input", {}),
+            continuation=continuation,
         )
 
     if t == "tool_result":
@@ -209,6 +256,7 @@ def part_from_dict(d: dict[str, Any]) -> Part:
             content=content,
             name=d.get("name"),
             is_error=d.get("is_error", False),
+            continuation=continuation,
         )
 
     raise ValueError(f"unsupported part type: {t}")
@@ -217,7 +265,11 @@ def part_from_dict(d: dict[str, Any]) -> Part:
 # ─── Messages ────────────────────────────────────────────────────────
 
 def message_to_dict(msg: Message) -> dict[str, Any]:
-    return {"role": msg.role, "parts": [part_to_dict(p) for p in msg.parts]}
+    out: dict[str, Any] = {"role": msg.role, "parts": [part_to_dict(p) for p in msg.parts]}
+    continuation = _continuation_to_json(msg.continuation)
+    if continuation is not None:
+        out["continuation"] = continuation
+    return out
 
 
 def message_from_dict(d: dict[str, Any]) -> Message:
@@ -229,7 +281,7 @@ def message_from_dict(d: dict[str, Any]) -> Message:
     )
     if not parts:
         raise ValueError(f"message for role '{role}' has no parts")
-    return Message(role=role, parts=parts)
+    return Message(role=role, parts=parts, continuation=_continuation_from_json(d.get("continuation")))
 
 
 def messages_to_json(messages: list[Message] | tuple[Message, ...]) -> list[dict[str, Any]]:
@@ -385,6 +437,11 @@ def delta_to_dict(d: Delta) -> dict[str, Any]:
         out["text"] = d.text
         out["url"] = d.url
         out["title"] = d.title
+    elif isinstance(d, ContinuationDelta):
+        out["provider"] = d.provider
+        out["kind"] = d.kind
+        out["data"] = d.data
+        out["part_index"] = d.part_index
     else:
         raise TypeError(f"unsupported delta type: {type(d)}")
 
@@ -428,6 +485,13 @@ def delta_from_dict(d: dict[str, Any]) -> Delta:
             url=d.get("url"),
             title=d.get("title"),
             part_index=part_index,
+        )
+    if t == "continuation":
+        return ContinuationDelta(
+            provider=d["provider"],
+            kind=d["kind"],
+            data=d.get("data", {}),
+            part_index=d.get("part_index"),
         )
 
     raise ValueError(f"unsupported delta type: {t}")

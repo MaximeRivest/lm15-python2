@@ -122,7 +122,7 @@ Observations:
 - The openai, groq, and anthropic SDKs cluster in the 250–600 ms range —
   they're all codegen'd on a similar template and drag in httpx + pydantic v2.
 - google-genai is heavier because it also imports `websockets`, large parts
-  of `google.*`, tenacity, protobuf shims.
+  of `google.*`, tenacity, and generated API shims.
 - LiteLLM's 2.1 s import is the worst offender by far: it eagerly imports
   tokenizers (HF `tokenizers` + `tiktoken`), pydantic, httpx, typer, the
   entire jinja2 stack (for prompt templating), and lazy-instantiates

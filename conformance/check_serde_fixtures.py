@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate canonical JSON serde fixtures and protobuf roundtrips."""
+"""Validate canonical JSON serde fixtures."""
 
 from __future__ import annotations
 
@@ -15,27 +15,7 @@ REPO_ROOT = ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from lm15 import protobuf as pbconv  # noqa: E402
 from lm15 import serde  # noqa: E402
-from lm15.types import (  # noqa: E402
-    AudioGenerationRequest,
-    AudioGenerationResponse,
-    AudioPart,
-    BatchRequest,
-    BatchResponse,
-    EmbeddingRequest,
-    EmbeddingResponse,
-    FileUploadRequest,
-    FileUploadResponse,
-    ImageGenerationRequest,
-    ImageGenerationResponse,
-    ImagePart,
-    Message,
-    Request,
-    Response,
-    TextPart,
-    Usage,
-)
 
 FIXTURE_PATH = ROOT / "serde" / "canonical.json"
 REPORT_DIR = ROOT / "reports"
@@ -73,8 +53,6 @@ KIND_SERDE: dict[str, tuple[JsonToObj, ObjToJson]] = {
     "live_server_event": (serde.live_server_event_from_dict, serde.live_server_event_to_dict),
 }
 
-PROTO_KINDS = set(KIND_SERDE)
-
 
 def load_cases() -> list[JsonObject]:
     return list(json.loads(FIXTURE_PATH.read_text()).get("cases", []))
@@ -105,63 +83,6 @@ def check_json_case(case: JsonObject) -> tuple[SerdeResult, Any | None]:
     if got != expected:
         return SerdeResult(case_id, kind, "json", "fail", f"expected {expected!r}, got {got!r}"), obj
     return SerdeResult(case_id, kind, "json", "pass"), obj
-
-
-def check_proto_case(case: JsonObject, obj: Any) -> SerdeResult:
-    case_id = str(case["id"])
-    kind = str(case["kind"])
-    if kind not in PROTO_KINDS:
-        return SerdeResult(case_id, kind, "protobuf", "skip", "kind has no protobuf mapping")
-    try:
-        message = pbconv.to_proto(obj)
-        out = pbconv.from_proto(message)
-    except Exception as exc:
-        return SerdeResult(case_id, kind, "protobuf", "error", str(exc))
-    if out != obj:
-        return SerdeResult(case_id, kind, "protobuf", "fail", f"expected {obj!r}, got {out!r}")
-    return SerdeResult(case_id, kind, "protobuf", "pass")
-
-
-def endpoint_samples() -> list[tuple[str, Any]]:
-    req = Request(model="m", messages=(Message.user("hello"),))
-    resp = Response(
-        id="resp_1",
-        model="m",
-        message=Message.assistant("hello"),
-        finish_reason="stop",
-        usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2),
-    )
-    return [
-        ("endpoint.embedding_request", EmbeddingRequest(model="embed", inputs=("hello", "world"), extensions={"task": "search"})),
-        ("endpoint.embedding_response", EmbeddingResponse(model="embed", vectors=((0.1, 0.2),), usage=Usage(input_tokens=1, total_tokens=1))),
-        ("endpoint.file_upload_request", FileUploadRequest(filename="hello.txt", bytes_data=b"hello", media_type="text/plain", model="m")),
-        ("endpoint.file_upload_response", FileUploadResponse(id="file_1", provider_data={"purpose": "test"})),
-        ("endpoint.batch_request", BatchRequest(model="m", requests=(req,), extensions={"completion_window": "24h"})),
-        ("endpoint.batch_response", BatchResponse(id="batch_1", status="completed", provider_data={"n": 1})),
-        ("endpoint.image_generation_request", ImageGenerationRequest(model="img", prompt="a cat", size="1024x1024")),
-        ("endpoint.image_generation_response", ImageGenerationResponse(images=(ImagePart(media_type="image/png", data="aGk="),), id="img_1", model="img")),
-        ("endpoint.audio_generation_request", AudioGenerationRequest(model="tts", prompt="hello", voice="alloy", format="wav")),
-        ("endpoint.audio_generation_response", AudioGenerationResponse(audio=AudioPart(media_type="audio/wav", data="aGk="), id="aud_1", model="tts")),
-        ("endpoint.request_wrapper", req),
-        ("endpoint.response_wrapper", resp),
-        ("endpoint.text_part", TextPart("hello")),
-    ]
-
-
-def check_endpoint_proto_samples() -> list[SerdeResult]:
-    results: list[SerdeResult] = []
-    for case_id, obj in endpoint_samples():
-        try:
-            message = pbconv.to_proto(obj)
-            out = pbconv.from_proto(message)
-        except Exception as exc:
-            results.append(SerdeResult(case_id, "endpoint", "protobuf", "error", str(exc)))
-            continue
-        if out != obj:
-            results.append(SerdeResult(case_id, "endpoint", "protobuf", "fail", f"expected {obj!r}, got {out!r}"))
-        else:
-            results.append(SerdeResult(case_id, "endpoint", "protobuf", "pass"))
-    return results
 
 
 def result_to_dict(result: SerdeResult) -> JsonObject:
@@ -207,11 +128,8 @@ def main(argv: list[str] | None = None) -> int:
 
     results: list[SerdeResult] = []
     for case in load_cases():
-        json_result, obj = check_json_case(case)
+        json_result, _obj = check_json_case(case)
         results.append(json_result)
-        if json_result.status == "pass" and obj is not None:
-            results.append(check_proto_case(case, obj))
-    results.extend(check_endpoint_proto_samples())
 
     counts: JsonObject = {}
     for result in results:

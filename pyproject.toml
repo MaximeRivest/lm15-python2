@@ -4,7 +4,6 @@ version = "0.0.0"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
-protobuf = ["protobuf>=5"]
 live = ["websockets>=12"]
 
 [tool.setuptools.packages.find]

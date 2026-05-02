@@ -11,6 +11,8 @@ from lm15.types import (
     CitationDelta,
     CitationPart,
     Config,
+    ContinuationDelta,
+    ContinuationState,
     FunctionTool,
     ImagePart,
     LiveClientImageEvent,
@@ -394,6 +396,72 @@ def test_provider_stream_splits_arbitrary_sse_chunks() -> None:
     assert isinstance(parsed[-1], StreamEndEvent)
     assert parsed[-1].usage is not None
     assert parsed[-1].usage.total_tokens == 3
+
+
+def test_anthropic_stream_redacted_thinking_emits_content_and_continuation() -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    request = Request(model="claude-test", messages=(Message.user("Hi"),))
+    raw = type("Raw", (), {})()
+    raw.data = json.dumps(
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "redacted_thinking", "data": "opaque"},
+        }
+    )
+
+    parsed = list(lm.parse_stream_events(request, raw))
+
+    assert len(parsed) == 2
+    assert isinstance(parsed[0], StreamDeltaEvent)
+    assert parsed[0].delta == ThinkingDelta(text="[redacted]", part_index=0)
+    assert isinstance(parsed[1], StreamDeltaEvent)
+    assert parsed[1].delta == ContinuationDelta(
+        provider="anthropic",
+        kind="redacted_thinking",
+        data={"data": "opaque"},
+        part_index=0,
+    )
+
+
+def test_anthropic_replays_unsigned_thinking_as_text() -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    request = Request(
+        model="claude-test",
+        messages=(Message.assistant((ThinkingPart("scratch"),)), Message.user("Continue")),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["messages"][0]["content"] == [{"type": "text", "text": "scratch"}]
+
+
+def test_anthropic_replays_signed_thinking_as_native_thinking() -> None:
+    lm = AnthropicLM(api_key="sk-ant", transport=_FakeTransport())
+    request = Request(
+        model="claude-test",
+        messages=(
+            Message.assistant((
+                ThinkingPart(
+                    "scratch",
+                    continuation=(
+                        ContinuationState(
+                            provider="anthropic",
+                            kind="thinking_signature",
+                            data={"signature": "sig"},
+                        ),
+                    ),
+                ),
+            )),
+            Message.user("Continue"),
+        ),
+    )
+
+    payload = json.loads(lm.build_request(request, stream=False).body)
+
+    assert payload["messages"][0]["content"] == [
+        {"type": "thinking", "thinking": "scratch", "signature": "sig"}
+    ]
 
 
 def test_anthropic_payload_uses_developer_prefix_and_reasoning() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Iterator
 
 from ..errors import (
     AuthError,
@@ -27,6 +27,8 @@ from ..types import (
     BatchResponse,
     BuiltinTool,
     CitationDelta,
+    ContinuationDelta,
+    ContinuationState,
     CitationPart,
     DocumentPart,
     ErrorDetail,
@@ -47,6 +49,7 @@ from ..types import (
     ThinkingDelta,
     ThinkingPart,
     ToolCallDelta,
+    continuation_data,
     ToolCallPart,
     ToolResultPart,
     Usage,
@@ -332,6 +335,16 @@ class AnthropicLM(BaseProviderLM):
                 out["is_error"] = True
             return out
         if isinstance(part, ThinkingPart):
+            redacted = continuation_data(part, "anthropic", "redacted_thinking")
+            if redacted is not None:
+                return {"type": "redacted_thinking", **redacted}
+            signature = continuation_data(part, "anthropic", "thinking_signature")
+            if signature and signature.get("signature"):
+                return {
+                    "type": "thinking",
+                    "thinking": part.text,
+                    "signature": signature["signature"],
+                }
             return {"type": "text", "text": part.text}
         return {"type": "text", "text": getattr(part, "text", "") or ""}
 
@@ -463,9 +476,34 @@ class AnthropicLM(BaseProviderLM):
                     input=block.get("input") if isinstance(block.get("input"), dict) else {},
                 ))
             elif block_type == "thinking":
-                parts.append(ThinkingPart(text=str(block.get("thinking") or block.get("text") or ""), redacted=False))
+                continuation: tuple[ContinuationState, ...] = ()
+                if block.get("signature"):
+                    continuation = (
+                        ContinuationState(
+                            provider="anthropic",
+                            kind="thinking_signature",
+                            data={"signature": str(block.get("signature"))},
+                        ),
+                    )
+                parts.append(
+                    ThinkingPart(
+                        text=str(block.get("thinking") or block.get("text") or ""),
+                        redacted=False,
+                        continuation=continuation,
+                    )
+                )
             elif block_type == "redacted_thinking":
-                parts.append(ThinkingPart(text="[redacted]", redacted=True))
+                continuation = ()
+                redacted_payload = block.get("data")
+                if redacted_payload is not None:
+                    continuation = (
+                        ContinuationState(
+                            provider="anthropic",
+                            kind="redacted_thinking",
+                            data={"data": redacted_payload},
+                        ),
+                    )
+                parts.append(ThinkingPart(text="[redacted]", redacted=True, continuation=continuation))
             elif block_type in ANTHROPIC_PROVIDER_EXECUTED_BLOCKS:
                 continue
             else:
@@ -485,14 +523,61 @@ class AnthropicLM(BaseProviderLM):
             cache_write_tokens=usage_payload.get("cache_creation_input_tokens"),
         )
         has_tool = any(isinstance(part, ToolCallPart) for part in parts)
+        message_continuation: tuple[ContinuationState, ...] = ()
+        if data.get("id"):
+            message_continuation = (
+                ContinuationState(
+                    provider="anthropic",
+                    kind="message_id",
+                    data={"id": str(data.get("id"))},
+                ),
+            )
         return Response(
             id=str(data.get("id")) if data.get("id") else None,
             model=str(data.get("model") or request.model),
-            message=Message.assistant(tuple(parts)),
+            message=Message(role="assistant", parts=tuple(parts), continuation=message_continuation),
             finish_reason=_finish_reason(data.get("stop_reason"), has_tool_call=has_tool),
             usage=usage,
             provider_data=_attach_unmapped(data, unmapped),
         )
+
+    def parse_stream_events(self, request: Request, raw_event: SSEEvent) -> Iterator[StreamEvent]:
+        if not raw_event.data:
+            return
+        payload = json.loads(raw_event.data)
+        et = payload.get("type")
+        if et == "message_start":
+            event = self.parse_stream_event(request, raw_event)
+            if event is not None:
+                yield event
+            msg = payload.get("message", {}) if isinstance(payload.get("message"), dict) else {}
+            if msg.get("id"):
+                yield StreamDeltaEvent(
+                    delta=ContinuationDelta(
+                        provider="anthropic",
+                        kind="message_id",
+                        data={"id": str(msg.get("id"))},
+                        part_index=None,
+                    )
+                )
+            return
+        if et == "content_block_start":
+            block = payload.get("content_block", {}) if isinstance(payload.get("content_block"), dict) else {}
+            if block.get("type") == "redacted_thinking" and block.get("data") is not None:
+                idx = int(payload.get("index", 0) or 0)
+                yield StreamDeltaEvent(delta=ThinkingDelta(text="[redacted]", part_index=idx))
+                yield StreamDeltaEvent(
+                    delta=ContinuationDelta(
+                        provider="anthropic",
+                        kind="redacted_thinking",
+                        data={"data": block.get("data")},
+                        part_index=idx,
+                    )
+                )
+                return
+        event = self.parse_stream_event(request, raw_event)
+        if event is not None:
+            yield event
 
     def parse_stream_event(self, request: Request, raw_event: SSEEvent) -> StreamEvent | None:
         if not raw_event.data:
@@ -516,6 +601,15 @@ class AnthropicLM(BaseProviderLM):
                         name=str(block.get("name") or "") or None,
                     )
                 )
+            if block.get("type") == "redacted_thinking" and block.get("data") is not None:
+                return StreamDeltaEvent(
+                    delta=ContinuationDelta(
+                        provider="anthropic",
+                        kind="redacted_thinking",
+                        data={"data": block.get("data")},
+                        part_index=int(payload.get("index", 0) or 0),
+                    )
+                )
             return None
         if et == "content_block_delta":
             delta = payload.get("delta", {}) if isinstance(payload.get("delta"), dict) else {}
@@ -527,6 +621,15 @@ class AnthropicLM(BaseProviderLM):
                 return StreamDeltaEvent(delta=ToolCallDelta(input=str(delta.get("partial_json") or ""), part_index=idx))
             if dtype == "thinking_delta":
                 return StreamDeltaEvent(delta=ThinkingDelta(text=str(delta.get("thinking") or ""), part_index=idx))
+            if dtype == "signature_delta" and delta.get("signature"):
+                return StreamDeltaEvent(
+                    delta=ContinuationDelta(
+                        provider="anthropic",
+                        kind="thinking_signature",
+                        data={"signature": str(delta.get("signature"))},
+                        part_index=idx,
+                    )
+                )
             if dtype in {"citation_delta", "citations_delta"}:
                 citation = delta.get("citation", {}) if isinstance(delta.get("citation"), dict) else delta
                 return StreamDeltaEvent(delta=CitationDelta(

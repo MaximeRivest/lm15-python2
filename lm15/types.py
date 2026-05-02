@@ -70,6 +70,8 @@ PartType = Literal[
     "citation",
 ]
 
+ContinuationKind: TypeAlias = str
+
 # FinishReason values are a separate namespace from PartType values even when
 # a token such as "tool_call" appears in both.
 FinishReason = Literal["stop", "length", "tool_call", "content_filter", "error"]
@@ -184,6 +186,88 @@ def _validate_extensions_field(obj: object) -> None:
         object.__setattr__(obj, "extensions", None)
         return
     _validate_json_field(obj, "extensions")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ContinuationState:
+    """Opaque provider-owned state needed to continue/replay a transcript.
+
+    Continuation state is not visible model content.  It travels with the
+    Message or Part it describes so provider adapters can reconstruct future
+    provider requests without relying on detached response metadata.
+    """
+
+    provider: str
+    kind: ContinuationKind
+    data: JsonObject = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.provider, field_name="ContinuationState.provider", allow_empty=False)
+        _validate_text(self.kind, field_name="ContinuationState.kind", allow_empty=False)
+        _validate_json_field(self, "data", required=True)
+
+    def __repr__(self) -> str:
+        return (
+            "ContinuationState("
+            f"provider={self.provider!r}, "
+            f"kind={self.kind!r}, "
+            f"data=<dict: {len(self.data)} keys>)"
+        )
+
+
+def _normalize_continuation(value: Any, *, field_name: str = "continuation") -> tuple[ContinuationState, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, ContinuationState):
+        return (value,)
+    if isinstance(value, str):
+        raise TypeError(f"{field_name} must contain ContinuationState objects")
+    try:
+        states = tuple(value)
+    except TypeError as exc:
+        raise TypeError(f"{field_name} must be a sequence of ContinuationState objects") from exc
+    if not all(isinstance(item, ContinuationState) for item in states):
+        raise TypeError(f"{field_name} must contain ContinuationState objects")
+    return states
+
+
+def _validate_continuation_field(obj: object, field_name: str = "continuation") -> None:
+    object.__setattr__(
+        obj,
+        field_name,
+        _normalize_continuation(getattr(obj, field_name), field_name=field_name),
+    )
+
+
+def _continuation_repr(value: tuple[ContinuationState, ...]) -> str | None:
+    if not value:
+        return None
+    return f"<{len(value)} continuation state{'s' if len(value) != 1 else ''}>"
+
+
+def _continuation_by_kind(
+    value: tuple[ContinuationState, ...], provider: str, kind: str
+) -> JsonObject | None:
+    for state in value:
+        if state.provider == provider and state.kind == kind:
+            return state.data
+    return None
+
+
+def continuation_data(
+    value: Message | Part | tuple[ContinuationState, ...], provider: str, kind: str
+) -> JsonObject | None:
+    """Return provider-owned continuation data from a Message or Part.
+
+    This is a convenience helper for provider adapters and advanced callers.
+    It returns the opaque JSON object attached to the first matching
+    ContinuationState, or None when no match exists.
+    """
+    if isinstance(value, tuple):
+        states = value
+    else:
+        states = getattr(value, "continuation", ())
+    return _continuation_by_kind(states, provider, kind)
 
 
 def _validate_int(value: Any, *, field_name: str) -> None:
@@ -373,6 +457,7 @@ class _MediaMixin:
     url: str | None = None
     file_id: str | None = None
     path: Path | None = None
+    continuation: tuple[ContinuationState, ...] = ()
 
     def __post_init__(self) -> None:
         if self.path is not None and not isinstance(self.path, Path):
@@ -384,6 +469,7 @@ class _MediaMixin:
         _validate_media(self.__class__.__name__, self.data, self.url, self.file_id, self.path)
         if self.data is not None:
             _validate_base64_data(self.__class__.__name__, self.data)
+        _validate_continuation_field(self)
 
     def __repr__(self) -> str:
         fields = [
@@ -396,6 +482,9 @@ class _MediaMixin:
         detail = getattr(self, "detail", None)
         if detail is not None:
             fields.append(("detail", detail))
+        continuation = _continuation_repr(self.continuation)
+        if continuation is not None:
+            fields.append(("continuation", continuation))
         args = ", ".join(f"{name}={value!r}" for name, value in fields)
         return f"{self.__class__.__name__}({args})"
 
@@ -422,10 +511,12 @@ class TextPart:
     """A block of text content."""
 
     text: str
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["text"] = field(default="text", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.text, field_name="TextPart.text")
+        _validate_continuation_field(self)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -482,12 +573,14 @@ class ToolCallPart:
     id: str
     name: str
     input: JsonObject
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["tool_call"] = field(default="tool_call", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.id, field_name="ToolCallPart.id", allow_empty=False)
         _validate_text(self.name, field_name="ToolCallPart.name", allow_empty=False)
         _validate_json_field(self, "input", required=True)
+        _validate_continuation_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,6 +591,7 @@ class ToolResultPart:
     content: tuple[ToolResultContentPart, ...]
     name: str | None = None
     is_error: bool = False
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["tool_result"] = field(default="tool_result", init=False)
 
     def __post_init__(self) -> None:
@@ -517,6 +611,7 @@ class ToolResultPart:
                 "ToolResultPart.content cannot contain tool calls, nested tool "
                 "results, thinking parts, or refusals"
             )
+        _validate_continuation_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -525,11 +620,13 @@ class ThinkingPart:
 
     text: str
     redacted: bool = False
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["thinking"] = field(default="thinking", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.text, field_name="ThinkingPart.text")
         _validate_bool(self.redacted, field_name="ThinkingPart.redacted")
+        _validate_continuation_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,10 +639,12 @@ class RefusalPart:
     """
 
     text: str
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["refusal"] = field(default="refusal", init=False)
 
     def __post_init__(self) -> None:
         _validate_text(self.text, field_name="RefusalPart.text", allow_empty=False)
+        _validate_continuation_field(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -555,6 +654,7 @@ class CitationPart:
     url: str | None = None
     title: str | None = None
     text: str | None = None
+    continuation: tuple[ContinuationState, ...] = ()
     type: Literal["citation"] = field(default="citation", init=False)
 
     def __post_init__(self) -> None:
@@ -563,6 +663,7 @@ class CitationPart:
         _validate_optional_text(self.text, field_name="CitationPart.text", allow_empty=False)
         if self.url is None and self.title is None and self.text is None:
             raise ValueError("CitationPart requires at least one of url, title, or text")
+        _validate_continuation_field(self)
 
 
 _TOOL_RESULT_FORBIDDEN_PARTS: tuple[type, ...] = (
@@ -665,17 +766,22 @@ _PROMPT_FORBIDDEN_PARTS: tuple[type, ...] = (
 # at module level — there's no base class to hang them on.
 
 
-def text(content: str) -> TextPart:
+def text(content: str, *, continuation: Sequence[ContinuationState] | ContinuationState | None = None) -> TextPart:
     """Create a text part."""
-    return TextPart(text=content)
+    return TextPart(text=content, continuation=_normalize_continuation(continuation))
 
 
-def thinking(content: str, *, redacted: bool = False) -> ThinkingPart:
-    return ThinkingPart(text=content, redacted=redacted)
+def thinking(
+    content: str,
+    *,
+    redacted: bool = False,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
+) -> ThinkingPart:
+    return ThinkingPart(text=content, redacted=redacted, continuation=_normalize_continuation(continuation))
 
 
-def refusal(content: str) -> RefusalPart:
-    return RefusalPart(text=content)
+def refusal(content: str, *, continuation: Sequence[ContinuationState] | ContinuationState | None = None) -> RefusalPart:
+    return RefusalPart(text=content, continuation=_normalize_continuation(continuation))
 
 
 def citation(
@@ -683,8 +789,9 @@ def citation(
     url: str | None = None,
     title: str | None = None,
     text: str | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> CitationPart:
-    return CitationPart(url=url, title=title, text=text)
+    return CitationPart(url=url, title=title, text=text, continuation=_normalize_continuation(continuation))
 
 
 def _encode_data(data: bytes | str) -> str:
@@ -732,6 +839,7 @@ def image(
     file_id: str | None = None,
     media_type: str | None = None,
     detail: Literal["low", "high", "auto"] | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> ImagePart:
     encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "ImagePart",
@@ -749,6 +857,7 @@ def image(
         file_id=file_id,
         path=media_path,
         detail=detail,
+        continuation=_normalize_continuation(continuation),
     )
 
 
@@ -759,6 +868,7 @@ def audio(
     path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> AudioPart:
     encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "AudioPart",
@@ -775,6 +885,7 @@ def audio(
         url=url,
         file_id=file_id,
         path=media_path,
+        continuation=_normalize_continuation(continuation),
     )
 
 
@@ -785,6 +896,7 @@ def video(
     path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> VideoPart:
     encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "VideoPart",
@@ -801,6 +913,7 @@ def video(
         url=url,
         file_id=file_id,
         path=media_path,
+        continuation=_normalize_continuation(continuation),
     )
 
 
@@ -811,6 +924,7 @@ def document(
     path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> DocumentPart:
     encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "DocumentPart",
@@ -827,6 +941,7 @@ def document(
         url=url,
         file_id=file_id,
         path=media_path,
+        continuation=_normalize_continuation(continuation),
     )
 
 
@@ -837,6 +952,7 @@ def binary(
     path: str | PathLike[str] | None = None,
     file_id: str | None = None,
     media_type: str | None = None,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> BinaryPart:
     encoded_data, media_path, resolved_media_type = _prepare_media_factory_input(
         "BinaryPart",
@@ -853,11 +969,18 @@ def binary(
         url=url,
         file_id=file_id,
         path=media_path,
+        continuation=_normalize_continuation(continuation),
     )
 
 
-def tool_call(id: str, name: str, input: JsonObject) -> ToolCallPart:
-    return ToolCallPart(id=id, name=name, input=input)
+def tool_call(
+    id: str,
+    name: str,
+    input: JsonObject,
+    *,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
+) -> ToolCallPart:
+    return ToolCallPart(id=id, name=name, input=input, continuation=_normalize_continuation(continuation))
 
 
 def tool_result(
@@ -866,6 +989,7 @@ def tool_result(
     *,
     name: str | None = None,
     is_error: bool = False,
+    continuation: Sequence[ContinuationState] | ContinuationState | None = None,
 ) -> ToolResultPart:
     """Create a tool result part.
 
@@ -874,7 +998,13 @@ def tool_result(
     use BinaryPart for arbitrary bytes that are not image/audio/video/document.
     """
     parts = _normalize_parts(content)  # type: ignore[arg-type]
-    return ToolResultPart(id=id, content=parts, name=name, is_error=is_error)
+    return ToolResultPart(
+        id=id,
+        content=parts,
+        name=name,
+        is_error=is_error,
+        continuation=_normalize_continuation(continuation),
+    )
 
 
 # ─── Messages ────────────────────────────────────────────────────────
@@ -899,6 +1029,7 @@ class Message:
 
     role: Role
     parts: tuple[Part, ...]
+    continuation: tuple[ContinuationState, ...] = ()
 
     def __post_init__(self) -> None:
         if self.role not in ROLE_VALUES:
@@ -911,6 +1042,7 @@ class Message:
             raise ValueError("Message requires at least one part")
         if not all(_is_part(p) for p in self.parts):
             raise TypeError("Message.parts must contain Part objects")
+        _validate_continuation_field(self)
         _validate_message_parts(self.role, self.parts)
 
     @staticmethod
@@ -1030,7 +1162,7 @@ def _normalize_system(system: SystemContent | None) -> str | tuple[PromptPart, .
 # streaming.  Like Part, Delta is a discriminated union: fields that
 # don't belong to a variant don't exist on it.
 
-DeltaType = Literal["text", "thinking", "audio", "image", "tool_call", "citation"]
+DeltaType = Literal["text", "thinking", "audio", "image", "tool_call", "citation", "continuation"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -1160,6 +1292,31 @@ class CitationDelta:
             raise ValueError("CitationDelta requires at least one of text, url, or title")
 
 
+@dataclass(frozen=True, slots=True)
+class ContinuationDelta:
+    """Opaque provider continuation state arriving during streaming.
+
+    part_index=None attaches the state to the assistant message; otherwise it
+    attaches to the completed part with that index.
+    """
+
+    provider: str
+    kind: ContinuationKind
+    data: JsonObject = field(default_factory=dict)
+    part_index: int | None = None
+    type: Literal["continuation"] = field(default="continuation", init=False)
+
+    def __post_init__(self) -> None:
+        _validate_text(self.provider, field_name="ContinuationDelta.provider", allow_empty=False)
+        _validate_text(self.kind, field_name="ContinuationDelta.kind", allow_empty=False)
+        _validate_json_field(self, "data", required=True)
+        if self.part_index is not None:
+            _validate_part_index(self.part_index)
+
+    def to_state(self) -> ContinuationState:
+        return ContinuationState(provider=self.provider, kind=self.kind, data=self.data)
+
+
 Delta: TypeAlias = (
     TextDelta
     | ThinkingDelta
@@ -1167,27 +1324,27 @@ Delta: TypeAlias = (
     | ImageDelta
     | ToolCallDelta
     | CitationDelta
+    | ContinuationDelta
 )
 
 DELTA_CLASSES: tuple[type, ...] = get_args(Delta)
 DELTA_TYPES: dict[str, type] = {_variant_type(cls): cls for cls in DELTA_CLASSES}
 
-# Streaming boundary: every Delta variant assembles into exactly one
-# StreamablePart, and NonStreamablePart variants must have no Delta
-# representation.  The runtime consistency check below ties these manual
-# unions to the derived DELTA_TYPES/PART_TYPES tables so adding a Part or
-# Delta variant fails fast at module import if the boundary drifts.
+# Streaming boundary: content Delta variants assemble into Parts.  Some Delta
+# variants (currently ContinuationDelta) carry stream metadata that attaches to
+# a Message or Part rather than materializing as content.
 StreamablePart: TypeAlias = TextPart | ThinkingPart | ImagePart | AudioPart | ToolCallPart | CitationPart
 NonStreamablePart: TypeAlias = VideoPart | DocumentPart | BinaryPart | ToolResultPart | RefusalPart
 
 _STREAMABLE_PART_CLASSES: tuple[type, ...] = get_args(StreamablePart)
 _NON_STREAMABLE_PART_CLASSES: tuple[type, ...] = get_args(NonStreamablePart)
+_STATE_DELTA_TYPES = frozenset({"continuation"})
 
 
 def _check_streamable_partition() -> None:
     streamable = {_variant_type(cls) for cls in _STREAMABLE_PART_CLASSES}
     non_streamable = {_variant_type(cls) for cls in _NON_STREAMABLE_PART_CLASSES}
-    delta_types = set(DELTA_TYPES)
+    delta_types = set(DELTA_TYPES) - set(_STATE_DELTA_TYPES)
     part_types = set(PART_TYPES)
 
     overlap = streamable & non_streamable

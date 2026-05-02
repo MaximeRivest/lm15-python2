@@ -2,8 +2,8 @@
 
 `lm15-python2` is the Python reference implementation of **lm15**: a small,
 typed, provider-neutral interface for foundation-model requests, responses,
-streams, tools, media parts, endpoint APIs, errors, JSON serialization, and
-protobuf serialization.
+streams, tools, media parts, endpoint APIs, errors, and canonical JSON
+serialization.
 
 For now, this repo is also the reference conformance target for future lm15
 ports in other languages.
@@ -15,7 +15,7 @@ From this directory:
 ```bash
 python3 -m pip install -e .
 # Optional extras:
-python3 -m pip install -e '.[protobuf,live]'
+python3 -m pip install -e '.[live]'
 ```
 
 Run the tests:
@@ -34,12 +34,10 @@ lm15-python2/
 │   ├── providers/            # OpenAI, Anthropic, Gemini adapters
 │   ├── result.py             # stream materialization + lazy Result helper
 │   ├── serde.py              # canonical JSON dictionaries
-│   ├── protobuf.py           # dynamic protobuf conversion helpers
 │   ├── errors.py             # normalized lm15 error hierarchy
 │   ├── live.py               # websocket/live-session helpers
 │   ├── sse.py                # server-sent event parser
 │   └── transports/           # stdlib HTTP/1.1 sync + async transports
-├── proto/lm15/v1/lm15.proto  # language-neutral wire schema
 ├── conformance/              # fixture suite and reports
 ├── tests/                    # unit + conformance tests wired into pytest
 ├── benchmarks/               # transport benchmarks
@@ -335,7 +333,7 @@ print(image_response.images[0])
 ImagePart(media_type='image/png', data='<base64: 2461668 chars>', url=None, file_id=None, path=None)
 ```
 
-## JSON and protobuf serialization
+## Canonical JSON serialization
 
 `lm15.serde` converts public lm15 types to canonical JSON-compatible dicts.
 This is what conformance fixtures use.
@@ -352,17 +350,6 @@ round_tripped == request
 
 ```output | ✓ 41ms | 56 vars
 True
-```
-
-With the `protobuf` extra installed, `lm15.protobuf` converts the same objects
-to the schema in `proto/lm15/v1/lm15.proto`:
-
-```python
-from lm15.protobuf import from_proto_bytes, to_proto_bytes
-
-blob = to_proto_bytes(request)
-copy = from_proto_bytes("Request", blob)
-assert copy == request
 ```
 
 ## Error normalization
@@ -410,7 +397,7 @@ expected provider fixture
         ├── check_response_fixtures.py parses saved response bodies/SSE
         ├── check_error_fixtures.py normalizes provider error bodies
         ├── check_endpoint_fixtures.py checks embeddings/files/batch/image/audio/live
-        ├── check_serde_fixtures.py checks JSON + protobuf round trips
+        ├── check_serde_fixtures.py checks canonical JSON round trips
         └── check_doc_drift.py checks provider docs against features.yaml
 ```
 
@@ -526,7 +513,7 @@ python3 conformance/check_request_fixtures.py --strict
 # Response/SSE fixture parser check only
 python3 conformance/check_response_fixtures.py --strict
 
-# JSON + protobuf round trips only
+# Canonical JSON round trips only
 python3 conformance/check_serde_fixtures.py --strict
 
 # Provider-doc coverage only

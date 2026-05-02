@@ -12,6 +12,8 @@ from lm15.result import (
 )
 from lm15.types import (
     AudioPart,
+    ContinuationDelta,
+    ContinuationState,
     DocumentPart,
     ImageDelta,
     ImagePart,
@@ -19,6 +21,8 @@ from lm15.types import (
     RefusalPart,
     Request,
     Response,
+    StreamDeltaEvent,
+    StreamEndEvent,
     TextPart,
     Usage,
     VideoPart,
@@ -47,6 +51,66 @@ def test_response_to_events_preserves_image_file_ids() -> None:
     assert isinstance(events[1].delta, ImageDelta)
     assert events[1].delta.file_id == "file_123"
     assert events[-1].type == "end"
+
+
+def test_materialize_preserves_continuation_only_part_index() -> None:
+    response = Result(
+        events=iter((
+            StreamDeltaEvent(
+                delta=ContinuationDelta(
+                    provider="anthropic",
+                    kind="redacted_thinking",
+                    data={"data": "opaque"},
+                    part_index=0,
+                )
+            ),
+            StreamEndEvent(finish_reason="stop"),
+        )),
+        request=Request(model="m", messages=(Message.user("hi"),)),
+    ).response
+
+    assert response.message.parts == (
+        TextPart(
+            "",
+            continuation=(
+                ContinuationState(provider="anthropic", kind="redacted_thinking", data={"data": "opaque"}),
+            ),
+        ),
+    )
+
+
+def test_response_to_events_and_materialize_preserve_continuation_state() -> None:
+    response = Response(
+        id="r1",
+        model="m",
+        message=Message(
+            role="assistant",
+            parts=(
+                TextPart(
+                    "hello",
+                    continuation=(
+                        ContinuationState(provider="openai", kind="response_item_id", data={"id": "item_1"}),
+                    ),
+                ),
+            ),
+            continuation=(
+                ContinuationState(provider="openai", kind="response_id", data={"id": "resp_1"}),
+            ),
+        ),
+        finish_reason="stop",
+        usage=Usage(),
+    )
+
+    events = list(response_to_events(response))
+    assert any(
+        event.type == "delta" and isinstance(event.delta, ContinuationDelta) and event.delta.part_index is None
+        for event in events
+    )
+    rebuilt = Result(
+        events=iter(events),
+        request=Request(model="m", messages=(Message.user("hi"),)),
+    ).response
+    assert rebuilt == response
 
 
 @pytest.mark.parametrize(

@@ -33,6 +33,8 @@ from ..types import (
     AudioGenerationResponse,
     AudioPart,
     BatchRequest,
+    ContinuationDelta,
+    ContinuationState,
     BatchResponse,
     BinaryPart,
     BuiltinTool,
@@ -80,6 +82,7 @@ from ..types import (
     ToolCallDelta,
     ToolCallPart,
     ToolResultPart,
+    continuation_data,
     Usage,
     VideoPart,
 )
@@ -463,6 +466,9 @@ class GeminiLM(BaseProviderLM):
             out: dict[str, Any] = {"functionCall": {"name": part.name, "args": part.input}}
             if part.id:
                 out["functionCall"]["id"] = part.id
+            thought = continuation_data(part, "gemini", "thought_signature")
+            if thought and thought.get("value"):
+                out["thoughtSignature"] = thought["value"]
             return out
         if isinstance(part, ToolResultPart):
             result_text = parts_to_text(part.content)
@@ -471,7 +477,12 @@ class GeminiLM(BaseProviderLM):
                 fr["id"] = part.id
             return {"functionResponse": fr}
         if isinstance(part, ThinkingPart):
-            return {"text": part.text}
+            out: dict[str, Any] = {"text": part.text}
+            thought = continuation_data(part, "gemini", "thought_signature")
+            if thought and thought.get("value"):
+                out["thought"] = True
+                out["thoughtSignature"] = thought["value"]
+            return out
         return {"text": getattr(part, "text", "") or ""}
 
     def _message(self, msg: Message) -> dict[str, Any]:
@@ -612,15 +623,36 @@ class GeminiLM(BaseProviderLM):
                     _record_unmapped(unmapped, f"{path_prefix}[{part_index}]", type(part).__name__)
                 continue
             if "thought" in part and part.get("thought") and part.get("text"):
-                parts.append(ThinkingPart(text=str(part.get("text") or "")))
+                continuation: tuple[ContinuationState, ...] = ()
+                thought_signature = part.get("thoughtSignature")
+                if thought_signature is not None:
+                    continuation = (
+                        ContinuationState(
+                            provider="gemini",
+                            kind="thought_signature",
+                            data={"value": str(thought_signature)},
+                        ),
+                    )
+                parts.append(ThinkingPart(text=str(part.get("text") or ""), continuation=continuation))
             elif "text" in part:
                 parts.append(TextPart(text=str(part.get("text") or "")))
             elif "functionCall" in part and isinstance(part["functionCall"], dict):
                 fc = part["functionCall"]
+                continuation: tuple[ContinuationState, ...] = ()
+                thought_signature = part.get("thoughtSignature") or fc.get("thoughtSignature")
+                if thought_signature is not None:
+                    continuation = (
+                        ContinuationState(
+                            provider="gemini",
+                            kind="thought_signature",
+                            data={"value": str(thought_signature)},
+                        ),
+                    )
                 parts.append(ToolCallPart(
                     id=str(fc.get("id") or f"fc_{len(parts)}"),
                     name=str(fc.get("name") or "tool"),
                     input=fc.get("args") if isinstance(fc.get("args"), dict) else {},
+                    continuation=continuation,
                 ))
             elif "inlineData" in part and isinstance(part["inlineData"], dict):
                 inline = part["inlineData"]
@@ -679,10 +711,19 @@ class GeminiLM(BaseProviderLM):
             reasoning_tokens=usage_payload.get("thoughtsTokenCount"),
         )
         has_tool = any(isinstance(part, ToolCallPart) for part in parts)
+        message_continuation: tuple[ContinuationState, ...] = ()
+        if data.get("responseId"):
+            message_continuation = (
+                ContinuationState(
+                    provider="gemini",
+                    kind="response_id",
+                    data={"id": str(data.get("responseId"))},
+                ),
+            )
         return Response(
             id=str(data.get("responseId")) if data.get("responseId") else None,
             model=request.model,
-            message=Message.assistant(tuple(parts)),
+            message=Message(role="assistant", parts=tuple(parts), continuation=message_continuation),
             finish_reason=_finish_reason(candidate.get("finishReason"), has_tool_call=has_tool),
             usage=usage,
             provider_data=_attach_unmapped(data, unmapped),
@@ -781,6 +822,15 @@ class GeminiLM(BaseProviderLM):
                 if part.get("thought") and "text" in part:
                     yielded_delta = True
                     yield StreamDeltaEvent(delta=ThinkingDelta(text=str(part.get("text") or ""), part_index=idx))
+                    if part.get("thoughtSignature") is not None:
+                        yield StreamDeltaEvent(
+                            delta=ContinuationDelta(
+                                provider="gemini",
+                                kind="thought_signature",
+                                data={"value": str(part.get("thoughtSignature"))},
+                                part_index=idx,
+                            )
+                        )
                 elif "text" in part:
                     yielded_delta = True
                     yield StreamDeltaEvent(delta=TextDelta(text=str(part.get("text") or ""), part_index=idx))
@@ -794,6 +844,16 @@ class GeminiLM(BaseProviderLM):
                         id=str(fc.get("id") or "") or None,
                         name=str(fc.get("name") or "") or None,
                     ))
+                    thought_signature = part.get("thoughtSignature") or fc.get("thoughtSignature")
+                    if thought_signature is not None:
+                        yield StreamDeltaEvent(
+                            delta=ContinuationDelta(
+                                provider="gemini",
+                                kind="thought_signature",
+                                data={"value": str(thought_signature)},
+                                part_index=idx,
+                            )
+                        )
                 elif "inlineData" in part and isinstance(part["inlineData"], dict):
                     inline = part["inlineData"]
                     mime = str(inline.get("mimeType") or "application/octet-stream")
@@ -806,6 +866,15 @@ class GeminiLM(BaseProviderLM):
                         yield StreamDeltaEvent(delta=ImageDelta(data=data, part_index=idx, media_type=mime))
             finish = candidate.get("finishReason")
 
+        if payload.get("responseId") is not None:
+            yield StreamDeltaEvent(
+                delta=ContinuationDelta(
+                    provider="gemini",
+                    kind="response_id",
+                    data={"id": str(payload.get("responseId"))},
+                    part_index=None,
+                )
+            )
         if finish:
             yield StreamEndEvent(finish_reason=_finish_reason(finish, has_tool_call=saw_tool), usage=self._usage_from_payload(payload), provider_data=payload)
         elif not yielded_delta and "usageMetadata" in payload:

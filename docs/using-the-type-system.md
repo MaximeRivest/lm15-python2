@@ -163,14 +163,8 @@ payload = request_to_dict(request)
 request2 = request_from_dict(payload)
 ```
 
-Use `lm15.protobuf` for the canonical protobuf schema:
-
-```python
-from lm15.protobuf import from_proto_bytes, to_proto_bytes
-
-data = to_proto_bytes(request)
-request2 = from_proto_bytes("Request", data)
-```
+Canonical JSON is the portable interchange format used by the conformance
+fixtures and future language ports.
 
 ## Validation model
 

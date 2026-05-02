@@ -232,7 +232,7 @@ by line):
   full validation layer on top of httpx.
 - **google-genai** (~1000 ms): imports httpx + websockets + tenacity + a
   chunk of `google.*`, loads pydantic v2, imports `concurrent.futures`,
-  initializes protobuf types.
+  initializes generated API types.
 - **groq** (~250 ms): fork of the openai SDK with fewer generated
   endpoints, so it inherits the httpx + pydantic cost minus some surface
   area.

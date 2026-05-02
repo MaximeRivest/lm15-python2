@@ -34,6 +34,7 @@ from ..types import (
     BatchResponse,
     BuiltinTool,
     CitationDelta,
+    ContinuationState,
     CitationPart,
     EmbeddingRequest,
     EmbeddingResponse,
@@ -607,10 +608,19 @@ class OpenAILM(BaseProviderLM):
         )
 
         has_tool = any(isinstance(part, ToolCallPart) for part in parts)
+        message_continuation: tuple[ContinuationState, ...] = ()
+        if data.get("id"):
+            message_continuation = (
+                ContinuationState(
+                    provider="openai",
+                    kind="response_id",
+                    data={"id": str(data.get("id"))},
+                ),
+            )
         return Response(
             id=str(data.get("id")) if data.get("id") else None,
             model=str(data.get("model") or request.model),
-            message=Message.assistant(tuple(parts)),
+            message=Message(role="assistant", parts=tuple(parts), continuation=message_continuation),
             finish_reason=_finish_from_status(data, has_tool_call=has_tool),
             usage=usage,
             provider_data=_attach_unmapped(data, unmapped),

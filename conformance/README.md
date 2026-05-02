@@ -17,7 +17,7 @@ conformance/
 ├── check_response_fixtures.py    # provider response/SSE → canonical Response
 ├── check_error_fixtures.py       # provider error body → typed lm15 error
 ├── check_endpoint_fixtures.py    # embeddings/files/batch/image/audio/live
-├── check_serde_fixtures.py       # canonical JSON + protobuf round-trips
+├── check_serde_fixtures.py       # canonical JSON round-trips
 ├── check_doc_drift.py            # unmapped doc params vs feature inventory
 ├── cross_sdk/
 │   ├── test_cases.json           # canonical logical lm15 cases
@@ -73,8 +73,8 @@ Each script writes both JSON and Markdown reports under
   image generation, audio generation, plus live URL/header and session shape.
 
 - **serde_fixtures**
-  Round-trips canonical JSON fixtures and protobuf for every public lm15 type,
-  including endpoint request/response wrappers and live events.
+  Round-trips canonical JSON fixtures for every public lm15 type represented in
+  the portable interchange contract.
 
 - **doc_drift**
   Audits the snapshot of provider documentation under `provider_docs/` and
@@ -104,8 +104,8 @@ It must emit normalized JSON of this shape:
 The conformance runner can then compare each port against the same provider
 fixtures and against lm15-python2.
 
-## Protobuf
+## Canonical JSON
 
-The protobuf schema in `../proto/` is the language-neutral wire format.
-The canonical JSON fixtures in `serde/canonical.json` and the protobuf
-round-trip path in `check_serde_fixtures.py` keep them in sync.
+The canonical JSON fixtures in `serde/canonical.json` are the language-neutral
+interchange format. Future ports should round-trip these fixtures exactly and
+use the provider request/response/error fixtures as the behavioral oracle.

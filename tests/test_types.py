@@ -7,6 +7,10 @@ from lm15.serde import (
     config_to_dict,
     delta_from_dict,
     delta_to_dict,
+    message_from_dict,
+    message_to_dict,
+    part_from_dict,
+    part_to_dict,
     tool_to_dict,
 )
 from lm15.types import (
@@ -16,6 +20,8 @@ from lm15.types import (
     BinaryPart,
     CitationPart,
     Config,
+    ContinuationDelta,
+    ContinuationState,
     DocumentPart,
     EmbeddingRequest,
     EmbeddingResponse,
@@ -48,6 +54,7 @@ from lm15.types import (
     ToolResultPart,
     Usage,
     VideoPart,
+    continuation_data,
     audio,
     binary,
     document,
@@ -209,6 +216,22 @@ def test_response_json_returns_plain_json() -> None:
     assert response.json == {"items": [1]}
 
 
+def test_continuation_state_validates_and_roundtrips() -> None:
+    state = ContinuationState(provider="anthropic", kind="thinking_signature", data={"signature": "abc"})
+    part = ThinkingPart("reasoning", continuation=(state,))
+    msg = Message.assistant([part])
+
+    assert continuation_data(part, "anthropic", "thinking_signature") == {"signature": "abc"}
+    assert continuation_data(msg, "anthropic", "thinking_signature") is None
+    assert part_from_dict(part_to_dict(part)) == part
+    assert message_from_dict(message_to_dict(msg)) == msg
+
+    with pytest.raises(TypeError, match="ContinuationState objects"):
+        TextPart("hello", continuation=("bad",))  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="continuation entries"):
+        part_from_dict({"type": "text", "text": "x", "continuation": ["bad"]})
+
+
 def test_delta_variants_are_proper_unions() -> None:
     delta = TextDelta("hello")
 
@@ -245,9 +268,11 @@ def test_image_delta_accepts_partial_chunks_and_metadata() -> None:
 def test_delta_serde_roundtrips_variant_types() -> None:
     tool_delta = ToolCallDelta(input='{"x": 1}', id="call_1", name="lookup")
     image_delta = ImageDelta(url="https://example.com/image.png", media_type="image/png")
+    continuation_delta = ContinuationDelta(provider="gemini", kind="thought_signature", data={"value": "sig"}, part_index=1)
 
     assert delta_from_dict(delta_to_dict(tool_delta)) == tool_delta
     assert delta_from_dict(delta_to_dict(image_delta)) == image_delta
+    assert delta_from_dict(delta_to_dict(continuation_delta)) == continuation_delta
     assert delta_from_dict(delta_to_dict(TextDelta(""))) == TextDelta("")
 
 

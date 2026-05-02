@@ -27,7 +27,7 @@ import inspect
 import json
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Callable, Iterator
 
 from .errors import LM15Error, RETRYABLE_ERRORS, error_class_for_code
@@ -36,6 +36,8 @@ from .types import (
     AudioPart,
     CitationDelta,
     CitationPart,
+    ContinuationDelta,
+    ContinuationState,
     DocumentPart,
     ErrorDetail,
     ImageDelta,
@@ -101,6 +103,8 @@ class _RoundState:
     citation_parts: dict[int, list[CitationPart]] = field(default_factory=dict)
     tool_call_raw: dict[int, str] = field(default_factory=dict)
     tool_call_meta: dict[int, dict[str, Any]] = field(default_factory=dict)
+    message_continuation: list[ContinuationState] = field(default_factory=list)
+    part_continuation: dict[int, list[ContinuationState]] = field(default_factory=dict)
     provider_data: dict[str, Any] | None = None
 
     def apply(self, event: StreamEvent) -> list[StreamChunk]:
@@ -170,6 +174,13 @@ class _RoundState:
                 text=delta.text, url=delta.url, title=delta.title,
             ))
 
+        elif delta.type == "continuation":
+            state = delta.to_state()
+            if delta.part_index is None:
+                self.message_continuation.append(state)
+            else:
+                self.part_continuation.setdefault(delta.part_index, []).append(state)
+
         return chunks
 
     def materialize(self) -> Response:
@@ -184,25 +195,27 @@ class _RoundState:
             | set(self.audio_chunks)
             | set(self.citation_parts)
             | set(self.tool_call_meta)
+            | set(self.part_continuation)
         )
 
         for pos, idx in enumerate(part_indexes):
+            continuation = tuple(self.part_continuation.get(idx, ()))
             if idx in self.thinking_parts:
-                parts.append(ThinkingPart(text="".join(self.thinking_parts[idx])))
+                parts.append(ThinkingPart(text="".join(self.thinking_parts[idx]), continuation=continuation))
             if idx in self.text_parts:
-                parts.append(TextPart(text="".join(self.text_parts[idx])))
+                parts.append(TextPart(text="".join(self.text_parts[idx]), continuation=continuation))
             if idx in self.image_parts:
-                parts.append(self.image_parts[idx])
+                parts.append(replace(self.image_parts[idx], continuation=continuation))
             if idx in self.audio_chunks:
                 raw_data = _concat_b64_chunks(self.audio_chunks[idx])
                 media_type = self.audio_media_types.get(idx)
                 from .types import audio as make_audio
                 if media_type in (None, "audio/pcm", "audio/pcm16"):
-                    parts.append(make_audio(data=_pcm_to_wav(raw_data), media_type="audio/wav"))
+                    parts.append(make_audio(data=_pcm_to_wav(raw_data), media_type="audio/wav", continuation=continuation))
                 else:
-                    parts.append(make_audio(data=raw_data, media_type=media_type))
+                    parts.append(make_audio(data=raw_data, media_type=media_type, continuation=continuation))
             if idx in self.citation_parts:
-                parts.extend(self.citation_parts[idx])
+                parts.extend(replace(part, continuation=continuation) for part in self.citation_parts[idx])
             if idx in self.tool_call_meta:
                 meta = self.tool_call_meta[idx]
                 payload = meta.get("input")
@@ -217,7 +230,15 @@ class _RoundState:
                     else:
                         tc_name = "tool"
                 tc_id = str(meta.get("id") or f"tool_call_{idx}")
-                parts.append(ToolCallPart(id=tc_id, name=str(tc_name), input=payload))
+                parts.append(ToolCallPart(id=tc_id, name=str(tc_name), input=payload, continuation=continuation))
+            elif (
+                idx not in self.thinking_parts
+                and idx not in self.text_parts
+                and idx not in self.image_parts
+                and idx not in self.audio_chunks
+                and idx not in self.citation_parts
+            ):
+                parts.append(TextPart(text="", continuation=continuation))
 
         if not parts:
             parts = [TextPart(text="")]
@@ -232,7 +253,7 @@ class _RoundState:
         return Response(
             id=self.started_id,
             model=self.started_model or self.request.model,
-            message=Message(role="assistant", parts=tuple(parts)),
+            message=Message(role="assistant", parts=tuple(parts), continuation=tuple(self.message_continuation)),
             finish_reason=finish,
             usage=self.usage or Usage(),
             provider_data=self.provider_data,
@@ -658,6 +679,24 @@ def response_to_events(response: Response) -> Iterator[StreamEvent]:
             )
         else:
             _raise_non_streamable_part(part)
+        for state in part.continuation:
+            yield StreamDeltaEvent(
+                delta=ContinuationDelta(
+                    provider=state.provider,
+                    kind=state.kind,
+                    data=state.data,
+                    part_index=idx,
+                )
+            )
+    for state in response.message.continuation:
+        yield StreamDeltaEvent(
+            delta=ContinuationDelta(
+                provider=state.provider,
+                kind=state.kind,
+                data=state.data,
+                part_index=None,
+            )
+        )
     yield StreamEndEvent(
         finish_reason=response.finish_reason,
         usage=response.usage,

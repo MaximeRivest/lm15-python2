@@ -5,12 +5,7 @@ from conformance.check_endpoint_fixtures import iter_cases as iter_endpoint_case
 from conformance.check_error_fixtures import check_case as check_error_case, load_cases as load_error_cases
 from conformance.check_request_fixtures import compare_case as compare_request_case, load_logical_cases
 from conformance.check_response_fixtures import check_case as check_response_case
-from conformance.check_serde_fixtures import (
-    check_endpoint_proto_samples,
-    check_json_case,
-    check_proto_case,
-    load_cases as load_serde_cases,
-)
+from conformance.check_serde_fixtures import check_json_case, load_cases as load_serde_cases
 from conformance.response_fixtures import iter_cases_with_expect_lm15
 
 
@@ -62,22 +57,12 @@ def test_non_chat_endpoint_round_trips_match_provider_shapes() -> None:
     ]
 
 
-def test_serde_fixtures_round_trip_through_json_and_protobuf() -> None:
+def test_serde_fixtures_round_trip_through_json() -> None:
     failures = []
     for case in load_serde_cases():
-        json_result, obj = check_json_case(case)
+        json_result, _obj = check_json_case(case)
         if json_result.status != "pass":
             failures.append(json_result)
-            continue
-        if obj is not None:
-            proto_result = check_proto_case(case, obj)
-            if proto_result.status not in {"pass", "skip"}:
-                failures.append(proto_result)
-    failures.extend(
-        result
-        for result in check_endpoint_proto_samples()
-        if result.status not in {"pass", "skip"}
-    )
     assert not failures, [
         {"id": result.case_id, "kind": result.kind, "check": result.check, "status": result.status, "reason": result.reason}
         for result in failures
