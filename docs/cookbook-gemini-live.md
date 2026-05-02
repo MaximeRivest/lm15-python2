@@ -116,7 +116,7 @@ MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 lm = GeminiLM(api_key=os.environ.get("GEMINI_API_KEY", ""))
 print("MODEL:", MODEL)
 ```
-```output | ✓ 10.7s | 34 vars
+```output | ✓ 35ms | 43 vars
 Loaded .env from: /home/maxime/Projects/lm15-dev/.env
   GEMINI_API_KEY: AIzaSyB...nH1w
 MODEL: gemini-3.1-flash-live-preview
@@ -353,12 +353,12 @@ print("audio_byte_count:", turn1["audio_byte_count"])
 print("event_types:", [event.type for event in turn1["events"]])
 print("usage:", turn1["usage"])
 ```
-```output | ✓ 3.7s | 45 vars
+```output | ✓ 3.6s | 54 vars
 Wrote live-turn-audio.wav
 Playing with ffplay...
 text: 'live hello'
-audio_byte_count: 62404
-event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
+audio_byte_count: 48004
+event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
 usage: Usage(input_tokens=0, output_tokens=0, total_tokens=0, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None)
 ```
 
@@ -383,7 +383,7 @@ print("turn 2:", repr(remember_2["text"]))
 print("turn 1 event types:", [event.type for event in remember_1["events"]])
 print("turn 2 event types:", [event.type for event in remember_2["events"]])
 ```
-```output | ✓ 5.8s | 47 vars
+```output | ✓ 4.9s | 56 vars
 Wrote live-turn-audio.wav
 Playing with ffplay...
 Wrote live-turn-audio.wav
@@ -391,7 +391,7 @@ Playing with ffplay...
 turn 1: 'OK.'
 turn 2: 'amber-lime'
 turn 1 event types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
-turn 2 event types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
+turn 2 event types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
 ```
 
 ---
@@ -415,11 +415,11 @@ pprint.pp(live_stream_summary, width=100, sort_dicts=False)
 print("first events:", live_stream_events[:4])
 print("last event:", live_stream_events[-1])
 ```
-```output | ✓ 3.8s | 50 vars
+```output | ✓ 3.5s | 59 vars
 Wrote live-stream-audio.wav
 Playing with ffplay...
 {'text': 'stream hello',
- 'audio_byte_count': 48004,
+ 'audio_byte_count': 60962,
  'event_types': ['start',
                  'delta',
                  'delta',
@@ -441,7 +441,7 @@ Playing with ffplay...
                 input_audio_tokens=None,
                 output_audio_tokens=None),
  'errors': []}
-first events: [StreamStartEvent(id=None, model='gemini-3.1-flash-live-preview', type='start'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 4 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='stream hello', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 4 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta')]
+first events: [StreamStartEvent(id=None, model='gemini-3.1-flash-live-preview', type='start'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 4 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='stream hello', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 12160 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta')]
 last event: StreamEndEvent(
     finish_reason='stop',
     usage=Usage(input_tokens=144, output_tokens=5, total_tokens=144, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
@@ -461,8 +461,8 @@ generated_pcm = b"".join(
 wav_path = write_pcm_wav("live-stream-hello.wav", generated_pcm)
 print(wav_path, wav_path.stat().st_size)
 ```
-```output | ✓ 28ms | 52 vars
-live-stream-hello.wav 48048
+```output | ✓ 38ms | 61 vars
+live-stream-hello.wav 61006
 ```
 
 ---
@@ -488,11 +488,11 @@ transcribe_events = list(lm.stream(req_transcribe_generated_audio))
 transcribe_summary = summarize_stream(transcribe_events)
 pprint.pp(transcribe_summary, width=100, sort_dicts=False)
 ```
-```output | ✓ 3.5s | 55 vars
+```output | ✓ 4.4s | 64 vars
 Wrote live-stream-audio.wav
 Playing with ffplay...
-{'text': 'Stream Hello',
- 'audio_byte_count': 48002,
+{'text': 'Stream hello',
+ 'audio_byte_count': 55684,
  'event_types': ['start',
                  'delta',
                  'delta',
@@ -505,9 +505,9 @@ Playing with ffplay...
                  'delta',
                  'end'],
  'finish_reason': 'stop',
- 'usage': Usage(input_tokens=176,
+ 'usage': Usage(input_tokens=183,
                 output_tokens=6,
-                total_tokens=176,
+                total_tokens=183,
                 cache_read_tokens=None,
                 cache_write_tokens=None,
                 reasoning_tokens=None,
@@ -545,13 +545,10 @@ print("red_jpeg bytes:", len(red_jpeg), red_jpeg[:4])
 print("turn part mime:", turn_payload["clientContent"]["turns"][0]["parts"][0]["inlineData"]["mimeType"])
 print("frame mime:", frame_payload["realtimeInput"]["video"]["mimeType"])
 ```
-```output | ✗ 125ms | 4 vars
-Traceback (most recent call last):
-  File "/home/maxime/.cache/rat/kernels/py@lm15-python2/python-kernel.py", line 794, in run_code
-    exec(compile(module, "<rat>", "exec"), namespace, namespace)
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "<rat>", line 4, in <module>
-NameError: name 'base64' is not defined. Did you forget to import 'base64'?
+```output | ✓ 28ms | 67 vars
+red_jpeg bytes: 694 b'\xff\xd8\xff\xe0'
+turn part mime: image/jpeg
+frame mime: image/jpeg
 ```
 
 Now actually send frames over the live realtime path and listen to the response. Gemini includes realtime video frames in the next turn only when the live session is configured with the right turn coverage; `TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO` means "include all video frames since the last turn."
@@ -578,19 +575,17 @@ with lm.live(live_video_config) as session:
 
     # Give Gemini a moment to ingest the realtime frame buffer before the turn.
     time.sleep(0.75)
-    session.send_text("What color dominates the video frames I just sent? ")
+    session.send_text("What color dominates the video frames I just sent? be verbose")
     live_video_turn = collect_turn(session, audio_path="live-video-frame-audio.wav")
 
 print("text:", repr(live_video_turn["text"]))
 print("event_types:", [event.type for event in live_video_turn["events"]])
 ```
-```output | ✗ 25ms
-Traceback (most recent call last):
-  File "/home/maxime/.cache/rat/kernels/py@lm15-python2/python-kernel.py", line 794, in run_code
-    exec(compile(module, "<rat>", "exec"), namespace, namespace)
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "<rat>", line 1, in <module>
-NameError: name 'LiveConfig' is not defined
+```output | ✓ 26.3s | 69 vars
+Wrote live-video-frame-audio.wav
+Playing with ffplay...
+text: 'The video frames you sent are aggressively monochromatic, completely saturated with a vivid, deep red. There are no textual or object details visible, just a consistent field of that'
+event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'text', 'audio', 'audio']
 ```
 
 ---
@@ -643,11 +638,10 @@ print("text:", repr("".join(tool_demo_text)))
 print("event types:", [event.type for event in tool_demo_events])
 _ = play_live_event_audio(tool_demo_events, path="live-tool-audio.wav")
 ```
-
-```output | ✓ 5.3s | 56 vars
-tool calls: [LiveServerToolCallEvent(id='fc_11076802188267151003', name='get_weather', input={'city': 'Montreal'}, type='tool_call')]
-text: 'The weather in Montreal is 21°C and sunny.'
-event types: ['tool_call', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'text', 'audio', 'audio', 'turn_end']
+```output | ✓ 9.3s | 74 vars
+tool calls: [LiveServerToolCallEvent(id='fc_153691463906953224', name='get_weather', input={'city': 'Montreal'}, type='tool_call')]
+text: "Right now in Montreal, it's 21°C and sunny."
+event types: ['tool_call', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'turn_end']
 Wrote live-tool-audio.wav
 Playing with ffplay...
 ```
@@ -682,11 +676,10 @@ print("text prefix:", repr("".join(interrupt_text)[:120]))
 print("event_types:", [event.type for event in interrupt_events])
 _ = play_live_event_audio(interrupt_events, path="live-interrupt-audio.wav")
 ```
-
-```output | ✓ 849ms | 69 vars
+```output | ✓ 1.0s | 77 vars
 sent_interrupt: True
 text prefix: '1, 2,'
-event_types: ['audio', 'text', 'audio', 'interrupted']
+event_types: ['audio', 'text', 'interrupted']
 Wrote live-interrupt-audio.wav
 Playing with ffplay...
 ```

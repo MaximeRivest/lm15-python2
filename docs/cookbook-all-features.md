@@ -162,7 +162,7 @@ def pretty(value, *, width=100):
     """Pretty-print nested execute() results in notebooks/scripts."""
     pprint.pp(value, width=width, sort_dicts=False, compact=False)
 ```
-```output | ✓ 15ms | 21 vars
+```output | ✓ 302ms | 22 vars
 Loaded .env from: /home/maxime/Projects/lm15-dev/.env
   OPENAI_API_KEY: sk-proj...mtMA
   ANTHROPIC_API_KEY: sk-ant-...awAA

@@ -390,12 +390,19 @@ class AnthropicLM(BaseProviderLM):
         return payload
 
     def _payload(self, request: Request, stream: bool) -> dict[str, Any]:
-        extensions = dict(request.config.extensions or {})
-        prompt_caching = bool(extensions.get("prompt_caching"))
+        cache_cfg = request.config.cache
+        use_cache = cache_cfg is None or cache_cfg.mode != "off"
+        long_cache = cache_cfg is not None and cache_cfg.retention == "long"
 
         messages = [self._message(m) for m in request.messages]
-        if prompt_caching and len(messages) >= 2 and messages[-2].get("content"):
-            messages[-2]["content"][-1].setdefault("cache_control", {"type": "ephemeral"})
+
+        # Apply prefix caching if requested
+        if use_cache and cache_cfg is not None and cache_cfg.prefix_until_index is not None:
+            idx = min(cache_cfg.prefix_until_index, len(messages) - 1)
+            if idx >= 0 and messages[idx].get("content"):
+                last_block = messages[idx]["content"][-1]
+                if isinstance(last_block, dict):
+                    last_block.setdefault("cache_control", {"type": "ephemeral"})
 
         thinking_budget = _reasoning_thinking_budget(request)
         payload: dict[str, Any] = {
@@ -404,10 +411,14 @@ class AnthropicLM(BaseProviderLM):
             "stream": stream,
             "max_tokens": _max_tokens_for_anthropic(request, thinking_budget),
         }
+
         if request.system:
             system_text = request.system if isinstance(request.system, str) else parts_to_text(request.system)
-            if prompt_caching:
-                payload["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+            if use_cache:
+                cache_marker: dict[str, Any] = {"type": "ephemeral"}
+                if long_cache:
+                    cache_marker["ttl"] = "1h"
+                payload["system"] = [{"type": "text", "text": system_text, "cache_control": cache_marker}]
             else:
                 payload["system"] = system_text
         if request.config.temperature is not None:

@@ -508,6 +508,15 @@ class OpenAILM(BaseProviderLM):
             if request.config.reasoning.summary is not None:
                 reasoning_payload["summary"] = request.config.reasoning.summary
             payload["reasoning"] = reasoning_payload
+
+        # Cache / Prompt Caching support
+        cache_cfg = request.config.cache
+        if cache_cfg is not None and cache_cfg.mode != "off":
+            if cache_cfg.key:
+                payload["prompt_cache_key"] = cache_cfg.key
+            if cache_cfg.retention == "long":
+                payload["prompt_cache_retention"] = "24h"
+
         if request.config.extensions:
             passthrough = {k: v for k, v in request.config.extensions.items() if k != "prompt_caching"}
             payload.update(passthrough)

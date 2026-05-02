@@ -1564,6 +1564,42 @@ class Reasoning:
         return self.effort == "off"
 
 
+# ─── Cache / Prompt Caching ──────────────────────────────────
+
+CacheRetention = Literal["short", "long"]
+CacheMode = Literal["auto", "off"]
+
+
+@dataclass(frozen=True, slots=True)
+class CacheConfig:
+    """
+    Universal prompt cache and session affinity configuration.
+
+    This is the primary, provider-neutral way to control prompt caching
+    and stable session routing.
+
+    - mode="auto": Let the provider adapter decide sensible defaults.
+    - mode="off": Explicitly disable sending cache hints.
+    - retention: Request short-lived or long-lived cache when supported.
+    - key: Stable identifier for cache/session affinity.
+    - prefix_until_index: Cache everything up to (and including) this
+      message index. Useful for stable system + tools + history prefixes.
+    """
+
+    mode: CacheMode = "auto"
+    retention: CacheRetention | None = None
+    key: str | None = None
+    prefix_until_index: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode == "off" and (self.retention is not None or self.key is not None):
+            raise ValueError("CacheConfig(mode='off') cannot specify retention or key")
+        if self.prefix_until_index is not None:
+            _validate_non_negative(self.prefix_until_index, field_name="prefix_until_index")
+
+
+# ─── Tool Choice ───────────────────────────────────────────────────────
+
 @dataclass(frozen=True, slots=True)
 class ToolChoice:
     """How the model should use tools."""
@@ -1618,6 +1654,7 @@ class Config:
     response_format: JsonObject | None = None
     tool_choice: ToolChoice | None = None
     reasoning: Reasoning | None = None
+    cache: CacheConfig | None = None
     extensions: Extensions | None = None
 
     def __post_init__(self) -> None:
@@ -1641,6 +1678,8 @@ class Config:
             raise TypeError("tool_choice must be a ToolChoice")
         if self.reasoning is not None and not isinstance(self.reasoning, Reasoning):
             raise TypeError("reasoning must be a Reasoning")
+        if self.cache is not None and not isinstance(self.cache, CacheConfig):
+            raise TypeError("cache must be a CacheConfig")
         _validate_json_field(self, "response_format")
         _validate_extensions_field(self)
 

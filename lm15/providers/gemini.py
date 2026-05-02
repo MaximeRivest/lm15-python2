@@ -38,6 +38,7 @@ from ..types import (
     BatchResponse,
     BinaryPart,
     BuiltinTool,
+    CacheConfig,
     CitationPart,
     Config,
     DocumentPart,
@@ -503,7 +504,8 @@ class GeminiLM(BaseProviderLM):
 
     def _payload(self, request: Request) -> dict[str, Any]:
         extensions = dict(request.config.extensions or {})
-        prompt_caching = bool(extensions.get("prompt_caching"))
+        cache_cfg = request.config.cache
+        use_cache = cache_cfg is None or cache_cfg.mode != "off"
 
         payload: dict[str, Any] = {"contents": [self._message(m) for m in request.messages]}
         if request.system:
@@ -558,7 +560,7 @@ class GeminiLM(BaseProviderLM):
         elif output == "audio":
             payload.setdefault("generationConfig", {})["responseModalities"] = ["AUDIO"]
 
-        if prompt_caching:
+        if use_cache:
             self._apply_prompt_cache(request, payload)
 
         if extensions:
@@ -567,17 +569,47 @@ class GeminiLM(BaseProviderLM):
         return payload
 
     def _apply_prompt_cache(self, request: Request, payload: dict[str, Any]) -> None:
+        cache_cfg: CacheConfig | None = request.config.cache
         contents = payload.get("contents") or []
         if len(contents) < 2:
             return
-        prefix = contents[:-1]
-        key_payload = {"model": self._model_path(request.model), "systemInstruction": payload.get("systemInstruction"), "contents": prefix}
-        key = hashlib.sha256(json.dumps(key_payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+        # Determine prefix
+        if cache_cfg is not None and cache_cfg.prefix_until_index is not None:
+            prefix_end = min(cache_cfg.prefix_until_index + 1, len(contents))
+            prefix = contents[:prefix_end]
+            remaining = contents[prefix_end:]
+        else:
+            prefix = contents[:-1]
+            remaining = contents[-1:]
+
+        if not prefix:
+            return
+
+        # Build cache key
+        key_parts = {
+            "model": self._model_path(request.model),
+            "systemInstruction": payload.get("systemInstruction"),
+            "contents": prefix,
+        }
+        if cache_cfg is not None and cache_cfg.key:
+            key_parts["user_key"] = cache_cfg.key
+
+        key = hashlib.sha256(json.dumps(key_parts, sort_keys=True).encode("utf-8")).hexdigest()
         cache_id = self._cached_content_ids.get(key)
+
         if cache_id is None:
-            body: dict[str, Any] = {"model": self._model_path(request.model), "contents": prefix}
+            body: dict[str, Any] = {
+                "model": self._model_path(request.model),
+                "contents": prefix,
+            }
             if payload.get("systemInstruction"):
                 body["systemInstruction"] = payload["systemInstruction"]
+
+            # Set TTL if retention="long"
+            if cache_cfg is not None and cache_cfg.retention == "long":
+                body["ttl"] = "86400s"  # 24 hours
+
             resp = self._send(make_json_request(
                 method="POST",
                 url=f"{self.base_url.rstrip('/')}/cachedContents",
@@ -590,9 +622,10 @@ class GeminiLM(BaseProviderLM):
                 cache_id = data.get("name")
                 if cache_id:
                     self._cached_content_ids[key] = str(cache_id)
+
         if cache_id:
             payload["cachedContent"] = cache_id
-            payload["contents"] = contents[-1:]
+            payload["contents"] = remaining
             payload.pop("systemInstruction", None)
 
     def build_request(self, request: Request, stream: bool) -> TransportRequest:
