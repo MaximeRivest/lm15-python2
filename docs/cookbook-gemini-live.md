@@ -18,10 +18,18 @@ Live sessions use the optional `websockets` dependency. In this repo's venv it i
 ```bash
 pip install -e '.[live]'
 ```
+```output
+Defaulting to user installation because normal site-packages is not writeable
+Obtaining file:///home/maxime/Projects/lm15-dev/lm15-python2
+  Installing build dependencies ... - \ | / - \ | done
+  Checking if build backend supports build_editable ... done
+ERROR: Project file:///home/maxime/Projects/lm15-dev/lm15-python2 has a 'pyproject.toml' and its build backend is missing the 'build_editable' hook. Since it does not have a 'setup.py' nor a 'setup.cfg', it cannot be installed in editable mode. Consider using a build backend that supports PEP 660.
+Command exited with code 1
+```
 
 The setup cell loads `GEMINI_API_KEY` from a `.env` file in the current directory or a parent directory, then creates a `GeminiLM` provider. Override the model with `GEMINI_LIVE_MODEL` if needed.
 
-```python
+```py
 import os
 import shlex
 import json
@@ -116,10 +124,13 @@ MODEL = os.environ.get("GEMINI_LIVE_MODEL", "gemini-3.1-flash-live-preview")
 lm = GeminiLM(api_key=os.environ.get("GEMINI_API_KEY", ""))
 print("MODEL:", MODEL)
 ```
-```output | ✓ 35ms | 43 vars
+
+```output:exec-1777843832485-lxq1i
 Loaded .env from: /home/maxime/Projects/lm15-dev/.env
   GEMINI_API_KEY: AIzaSyB...nH1w
 MODEL: gemini-3.1-flash-live-preview
+
+✓ 56ms | 65 vars
 ```
 
 Helper functions used throughout the notebook:
@@ -335,6 +346,10 @@ def play_live_event_audio(events, *, path="live-turn-audio.wav", play_audio=None
         play_pcm_audio(audio_bytes_value, path=path, backend=AUDIO_BACKEND)
     return audio_bytes_value
 ```
+
+```output:exec-1777843836808-7lt9b
+✓ 46ms | 65 vars
+```
 ---
 
 ## 1. Persistent Live Session: Text In, Audio + Text Out
@@ -353,12 +368,23 @@ print("audio_byte_count:", turn1["audio_byte_count"])
 print("event_types:", [event.type for event in turn1["events"]])
 print("usage:", turn1["usage"])
 ```
-```output | ✓ 3.6s | 54 vars
+
+```output:exec-1777843842087-k35em
 Wrote live-turn-audio.wav
 Playing with ffplay...
 text: 'live hello'
-audio_byte_count: 48004
+audio_byte_count: 48964
 event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
+usage: Usage(input_tokens=0, output_tokens=0, total_tokens=0, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None)
+
+✓ 3.4s | 65 vars
+```
+```output | ✓ 4.5s | 45 vars
+Wrote live-turn-audio.wav
+Playing with ffplay...
+text: 'live hello'
+audio_byte_count: 83042
+event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'turn_end']
 usage: Usage(input_tokens=0, output_tokens=0, total_tokens=0, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None)
 ```
 
@@ -383,7 +409,7 @@ print("turn 2:", repr(remember_2["text"]))
 print("turn 1 event types:", [event.type for event in remember_1["events"]])
 print("turn 2 event types:", [event.type for event in remember_2["events"]])
 ```
-```output | ✓ 4.9s | 56 vars
+```output | ✓ 5.5s | 47 vars
 Wrote live-turn-audio.wav
 Playing with ffplay...
 Wrote live-turn-audio.wav
@@ -415,12 +441,13 @@ pprint.pp(live_stream_summary, width=100, sort_dicts=False)
 print("first events:", live_stream_events[:4])
 print("last event:", live_stream_events[-1])
 ```
-```output | ✓ 3.5s | 59 vars
+```output | ✓ 3.6s | 50 vars
 Wrote live-stream-audio.wav
 Playing with ffplay...
 {'text': 'stream hello',
- 'audio_byte_count': 60962,
+ 'audio_byte_count': 64352,
  'event_types': ['start',
+                 'delta',
                  'delta',
                  'delta',
                  'delta',
@@ -432,19 +459,19 @@ Playing with ffplay...
                  'delta',
                  'end'],
  'finish_reason': 'stop',
- 'usage': Usage(input_tokens=144,
-                output_tokens=5,
-                total_tokens=144,
+ 'usage': Usage(input_tokens=145,
+                output_tokens=7,
+                total_tokens=145,
                 cache_read_tokens=None,
                 cache_write_tokens=None,
                 reasoning_tokens=None,
                 input_audio_tokens=None,
                 output_audio_tokens=None),
  'errors': []}
-first events: [StreamStartEvent(id=None, model='gemini-3.1-flash-live-preview', type='start'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 4 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='stream hello', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 12160 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta')]
+first events: [StreamStartEvent(id=None, model='gemini-3.1-flash-live-preview', type='start'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 4 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta'), StreamDeltaEvent(delta=TextDelta(text='stream hello', part_index=0, type='text'), type='delta'), StreamDeltaEvent(delta=AudioDelta(data='<base64: 11560 chars>', url=None, file_id=None, part_index=0, media_type='audio/pcm;rate=24000'), type='delta')]
 last event: StreamEndEvent(
     finish_reason='stop',
-    usage=Usage(input_tokens=144, output_tokens=5, total_tokens=144, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
+    usage=Usage(input_tokens=145, output_tokens=7, total_tokens=145, cache_read_tokens=None, cache_write_tokens=None, reasoning_tokens=None, input_audio_tokens=None, output_audio_tokens=None),
     type='end',
 )
 ```
@@ -461,8 +488,8 @@ generated_pcm = b"".join(
 wav_path = write_pcm_wav("live-stream-hello.wav", generated_pcm)
 print(wav_path, wav_path.stat().st_size)
 ```
-```output | ✓ 38ms | 61 vars
-live-stream-hello.wav 61006
+```output | ✓ 52ms | 52 vars
+live-stream-hello.wav 64396
 ```
 
 ---
@@ -488,11 +515,11 @@ transcribe_events = list(lm.stream(req_transcribe_generated_audio))
 transcribe_summary = summarize_stream(transcribe_events)
 pprint.pp(transcribe_summary, width=100, sort_dicts=False)
 ```
-```output | ✓ 4.4s | 64 vars
+```output | ✓ 4.0s | 55 vars
 Wrote live-stream-audio.wav
 Playing with ffplay...
-{'text': 'Stream hello',
- 'audio_byte_count': 55684,
+{'text': 'Stream Hello',
+ 'audio_byte_count': 51844,
  'event_types': ['start',
                  'delta',
                  'delta',
@@ -505,9 +532,9 @@ Playing with ffplay...
                  'delta',
                  'end'],
  'finish_reason': 'stop',
- 'usage': Usage(input_tokens=183,
+ 'usage': Usage(input_tokens=186,
                 output_tokens=6,
-                total_tokens=183,
+                total_tokens=186,
                 cache_read_tokens=None,
                 cache_write_tokens=None,
                 reasoning_tokens=None,
@@ -545,7 +572,7 @@ print("red_jpeg bytes:", len(red_jpeg), red_jpeg[:4])
 print("turn part mime:", turn_payload["clientContent"]["turns"][0]["parts"][0]["inlineData"]["mimeType"])
 print("frame mime:", frame_payload["realtimeInput"]["video"]["mimeType"])
 ```
-```output | ✓ 28ms | 67 vars
+```output | ✓ 43ms | 58 vars
 red_jpeg bytes: 694 b'\xff\xd8\xff\xe0'
 turn part mime: image/jpeg
 frame mime: image/jpeg
@@ -581,11 +608,11 @@ with lm.live(live_video_config) as session:
 print("text:", repr(live_video_turn["text"]))
 print("event_types:", [event.type for event in live_video_turn["events"]])
 ```
-```output | ✓ 26.3s | 69 vars
+```output | ✓ 25.8s | 60 vars
 Wrote live-video-frame-audio.wav
 Playing with ffplay...
-text: 'The video frames you sent are aggressively monochromatic, completely saturated with a vivid, deep red. There are no textual or object details visible, just a consistent field of that'
-event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'text', 'audio', 'audio']
+text: 'The color that absolutely dominates the video frames you sent is a vibrant, deeply saturated red. Every pixel in both frames appears to be filled with this single,'
+event_types: ['audio', 'text', 'audio', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text', 'audio', 'audio', 'text']
 ```
 
 ---

@@ -22,6 +22,7 @@ from ..errors import (
 )
 from ..features import EndpointSupport, ProviderManifest
 from ..live import WebSocketLiveSession, require_websocket_sync_connect
+from ..profiles import ProviderProfile, ResolvedOpenAIResponsesCompat, resolve_openai_responses_compat
 from ..protocols import Capabilities
 from ..sse import SSEEvent
 from ..transports import Request as TransportRequest
@@ -242,6 +243,7 @@ class OpenAILM(BaseProviderLM):
     api_key: str
     transport: SyncTransport = field(default_factory=default_transport)
     base_url: str = "https://api.openai.com/v1"
+    profile: ProviderProfile | None = None
 
     provider: str = "openai"
     capabilities: Capabilities = Capabilities(
@@ -304,6 +306,23 @@ class OpenAILM(BaseProviderLM):
         "authentication_error": AuthError,
         "rate_limit_error": RateLimitError,
     }
+
+    @classmethod
+    def from_profile(
+        cls,
+        *,
+        api_key: str,
+        profile: ProviderProfile,
+        transport: SyncTransport | None = None,
+    ) -> "OpenAILM":
+        endpoint = profile.endpoint("inference")
+        base_url = endpoint.base_url if endpoint and endpoint.base_url else "https://api.openai.com/v1"
+        return cls(
+            api_key=api_key,
+            transport=transport or default_transport(),
+            base_url=base_url,
+            profile=profile,
+        )
 
     def _headers(self, content_type: str = "application/json") -> dict[str, str]:
         return {
@@ -403,7 +422,19 @@ class OpenAILM(BaseProviderLM):
 
     # ─── Request serialization ──────────────────────────────────────
 
-    def _build_input(self, messages: tuple[Message, ...]) -> list[dict[str, Any]]:
+    def _compat(self, request: Request) -> ResolvedOpenAIResponsesCompat:
+        return resolve_openai_responses_compat(
+            base_url=self.base_url,
+            model=request.model,
+            profile=self.profile,
+            request_extensions=request.config.extensions,
+        )
+
+    def _build_input(
+        self,
+        messages: tuple[Message, ...],
+        compat: ResolvedOpenAIResponsesCompat,
+    ) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for msg in messages:
             if msg.role == "tool":
@@ -412,13 +443,14 @@ class OpenAILM(BaseProviderLM):
                         output = parts_to_text(part.content)
                         if not output:
                             output = json.dumps([{"type": p.type} for p in part.content])
-                        items.append(
-                            {
-                                "type": "function_call_output",
-                                "call_id": part.id,
-                                "output": output,
-                            }
-                        )
+                        item = {
+                            "type": "function_call_output",
+                            "call_id": part.id,
+                            "output": output,
+                        }
+                        if compat.tool_result_name == "include" and part.name:
+                            item["name"] = part.name
+                        items.append(item)
                 continue
 
             if msg.role == "assistant":
@@ -435,7 +467,10 @@ class OpenAILM(BaseProviderLM):
                     if not isinstance(part, (ToolCallPart, ToolResultPart))
                 ]
             if content_parts:
-                items.append({"role": msg.role, "content": content_parts})
+                role = msg.role
+                if role == "developer":
+                    role = compat.developer_role
+                items.append({"role": role, "content": content_parts})
 
             for part in msg.parts:
                 if isinstance(part, ToolCallPart):
@@ -466,15 +501,16 @@ class OpenAILM(BaseProviderLM):
         return "auto"
 
     def _payload(self, request: Request, stream: bool) -> dict[str, Any]:
+        compat = self._compat(request)
         payload: dict[str, Any] = {
             "model": request.model,
-            "input": self._build_input(request.messages),
+            "input": self._build_input(request.messages, compat),
             "stream": stream,
         }
         if request.system:
             payload["instructions"] = request.system if isinstance(request.system, str) else parts_to_text(request.system)
         if request.config.max_tokens is not None:
-            payload["max_output_tokens"] = request.config.max_tokens
+            payload[compat.max_output_tokens_field] = request.config.max_tokens
         if request.config.temperature is not None:
             payload["temperature"] = request.config.temperature
         if request.config.top_p is not None:
@@ -483,14 +519,15 @@ class OpenAILM(BaseProviderLM):
             tools_wire: list[dict[str, Any]] = []
             for tool in request.tools:
                 if isinstance(tool, FunctionTool):
-                    tools_wire.append(
-                        {
-                            "type": "function",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        }
-                    )
+                    tool_payload = {
+                        "type": "function",
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                    if compat.strict_tools == "include":
+                        tool_payload["strict"] = False
+                    tools_wire.append(tool_payload)
                 elif isinstance(tool, BuiltinTool):
                     tools_wire.append(_builtin_to_openai(tool))
             payload["tools"] = tools_wire
@@ -501,24 +538,57 @@ class OpenAILM(BaseProviderLM):
             payload["parallel_tool_calls"] = request.config.tool_choice.parallel
         if request.config.response_format:
             payload["text"] = _response_format_to_openai_text(request.config.response_format)
-        if request.config.reasoning and not request.config.reasoning.is_off:
-            effort = request.config.reasoning.effort
-            effort = {"adaptive": "medium", "xhigh": "high"}.get(effort, effort)
-            reasoning_payload: dict[str, Any] = {"effort": effort}
-            if request.config.reasoning.summary is not None:
-                reasoning_payload["summary"] = request.config.reasoning.summary
-            payload["reasoning"] = reasoning_payload
+        if request.config.reasoning:
+            reasoning = request.config.reasoning
+            if not reasoning.is_off:
+                effort = {"adaptive": "medium", "xhigh": "high"}.get(reasoning.effort, reasoning.effort)
+                if compat.reasoning_format == "responses_reasoning":
+                    reasoning_payload: dict[str, Any] = {"effort": effort}
+                    if reasoning.summary is not None:
+                        reasoning_payload["summary"] = reasoning.summary
+                    payload["reasoning"] = reasoning_payload
+                elif compat.reasoning_format == "reasoning_effort":
+                    payload["reasoning_effort"] = effort
+                elif compat.reasoning_format == "openrouter":
+                    payload["reasoning"] = {"effort": effort}
+                elif compat.reasoning_format == "deepseek":
+                    payload["thinking"] = {"type": "enabled"}
+                    payload["reasoning_effort"] = effort
+                elif compat.reasoning_format in {"qwen", "zai"}:
+                    payload["enable_thinking"] = True
+                elif compat.reasoning_format == "qwen_chat_template":
+                    payload["chat_template_kwargs"] = {
+                        "enable_thinking": True,
+                        "preserve_thinking": True,
+                    }
+            else:
+                if compat.reasoning_format == "deepseek":
+                    payload["thinking"] = {"type": "disabled"}
+                elif compat.reasoning_format in {"qwen", "zai"}:
+                    payload["enable_thinking"] = False
+                elif compat.reasoning_format == "qwen_chat_template":
+                    payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         # Cache / Prompt Caching support
         cache_cfg = request.config.cache
-        if cache_cfg is not None and cache_cfg.mode != "off":
+        if cache_cfg is not None and cache_cfg.mode != "off" and compat.cache_control == "openai":
             if cache_cfg.key:
                 payload["prompt_cache_key"] = cache_cfg.key
             if cache_cfg.retention == "long":
                 payload["prompt_cache_retention"] = "24h"
 
+        if compat.routing is not None:
+            payload["provider"] = compat.routing
+
         if request.config.extensions:
-            passthrough = {k: v for k, v in request.config.extensions.items() if k != "prompt_caching"}
+            reserved = {
+                "prompt_caching",
+                "cache",
+                "compat",
+                "openai_compat",
+                "openai_responses_compat",
+            }
+            passthrough = {k: v for k, v in request.config.extensions.items() if k not in reserved}
             payload.update(passthrough)
         return payload
 

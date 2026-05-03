@@ -32,6 +32,9 @@ lm15-python2/
 ├── lm15/
 │   ├── types.py              # canonical dataclasses: Request, Response, Parts, tools, endpoints
 │   ├── providers/            # OpenAI, Anthropic, Gemini adapters
+│   ├── compat.py             # typed API-dialect compatibility policies
+│   ├── models.py             # optional ModelInfo metadata + ModelRegistry
+│   ├── profiles.py           # ProviderProfile/EndpointProfile resolution helpers
 │   ├── result.py             # stream materialization + lazy Result helper
 │   ├── serde.py              # canonical JSON dictionaries
 │   ├── errors.py             # normalized lm15 error hierarchy

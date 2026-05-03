@@ -391,7 +391,7 @@ class AnthropicLM(BaseProviderLM):
 
     def _payload(self, request: Request, stream: bool) -> dict[str, Any]:
         cache_cfg = request.config.cache
-        use_cache = cache_cfg is None or cache_cfg.mode != "off"
+        use_cache = cache_cfg is not None and cache_cfg.mode != "off"
         long_cache = cache_cfg is not None and cache_cfg.retention == "long"
 
         messages = [self._message(m) for m in request.messages]
@@ -447,8 +447,8 @@ class AnthropicLM(BaseProviderLM):
             }
         if request.config.response_format:
             payload["output_config"] = _response_format_to_anthropic_output_config(request.config.response_format)
-        if extensions:
-            passthrough = {k: v for k, v in extensions.items() if k != "prompt_caching"}
+        if request.config.extensions:
+            passthrough = {k: v for k, v in request.config.extensions.items() if k != "prompt_caching"}
             payload.update(passthrough)
         return payload
 

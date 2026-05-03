@@ -53,6 +53,31 @@ with StdlibTransport(max_connections=10) as transport:
     ...
 ```
 
+## Provider profiles and local-compatible endpoints
+
+For normal provider usage, pass `api_key` and optionally `base_url` directly. If
+you need model metadata or OpenAI-compatible dialect controls, use a
+`ProviderProfile`. Profiles are optional and keep provider wire quirks out of
+`Request`.
+
+```python
+from lm15.compat import OpenAIResponsesCompat
+from lm15.profiles import ProviderProfile
+from lm15.providers import OpenAILM
+
+profile = ProviderProfile.inference(
+    provider="ollama",
+    api_family="openai_responses",
+    base_url="http://localhost:11434/v1",
+    compat=OpenAIResponsesCompat.preset("ollama"),
+)
+
+lm = OpenAILM.from_profile(api_key="ollama", profile=profile)
+```
+
+See [Using model profiles and compatibility policies](using-model-profiles.md)
+for model metadata, registries, presets, and request-level escape hatches.
+
 ## Make a complete call
 
 LMs consume `lm15.types.Request` and return `lm15.types.Response`.
